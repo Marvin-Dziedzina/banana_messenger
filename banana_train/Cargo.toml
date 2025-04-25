@@ -1,0 +1,7 @@
+[package]
+name = "banana_train"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ed25519 = { workspace = true }

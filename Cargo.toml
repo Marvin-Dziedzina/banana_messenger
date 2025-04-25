@@ -1,6 +1,5 @@
-[package]
-name = "banana_messenger"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+members = ["banana_core", "banana_train"]
 
-[dependencies]
+[workspace.dependencies]
+ed25519 = "2.2.3"
