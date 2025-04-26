@@ -5,3 +5,5 @@ edition = "2024"
 
 [dependencies]
 ed25519 = { workspace = true }
+tokio = { workspace = true }
+rusqlite = { workspace = true }
