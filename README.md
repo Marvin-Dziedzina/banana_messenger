@@ -2,7 +2,7 @@
 
 Banana Messenger is a simple encrypted messenger that allows you to send private messages and create groups.
 
-### Client
+## Banana Messenger
 
 Banana Messenger requires a simple account that is not linked with your personal data.
 
@@ -28,7 +28,7 @@ Short:
 - Send encrypted messages
 - Receive encrypted messages and decrypt them
 
-### Server
+## Banana Train
 
 Everyone can host a Banana Train (The Server).
 
