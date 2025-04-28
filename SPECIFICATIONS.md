@@ -3,7 +3,7 @@
 Cryptographic algorithms:
 - Password hashing: Argon2id
 - Asymmetric encryption: p384
-- Symmetric encryption: chacha20poly1305
+- Symmetric encryption: XChaCha20Poly1305
 - Signatures: Ed25519
 
 Database: rusqlite
@@ -12,11 +12,11 @@ Database: rusqlite
 
 The Banana Messenger Core is a crate that every front end can simply use to access the Banana Messenger network. The Banana Messenger Core has a easy and carefree API. Easy means that its simple to use and hard to get something wrong. Carefree means that the Banana Messenger Core cares about all keys, encryption, decryption, storing, sending, receiving, users, chats, chat histories and all related data. That is needed so that app developers can easily use this API without compromising important data.
 
-First the Banana Messenger Core needs to get unlocked. For that a Username and Password is needed. The Password is used to decrypt all data corresponding to the selected account. The account is determined by the Username The Banana Messenger Core supports multiple logins.
+First the Banana Messenger Core needs to get unlocked. For that a username and password is needed. The password is used to decrypt all data corresponding to the selected account. The account is determined by the username The Banana Messenger Core supports multiple logins. The password gets hashed with Argon2id and the salt that got generated at the account creation.
 
-A new account can be created by supplying a Username and Password.
+A new account can be created by supplying a Username and Password. The password will get hashed with Argon2id with a newly generated salt. It will get stored together. A new Sqlite database will be created. A new p384 key pair will be generated and stored in the sqlite database.
 
-On startup after login the Banana Messenger Core should connect to a Banana Train from a list of trusted Banana Trains. It should choose the one with the lowest ping.
+On startup after login the Banana Messenger Core should connect to a Banana Train from a list of trusted Banana Trains. It should choose the one with the lowest ping. They will exchange their public keys.
 
 To open a new chat with a user the Banana Messenger Core can search for a user by name or public key by requesting a Banana Train. The Banana Train will respond with the found accounts. If one is picked the Banana Train will respond with the public key of the target account.
 
