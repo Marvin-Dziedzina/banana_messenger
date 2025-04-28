@@ -1,0 +1,254 @@
+use chacha20poly1305::{
+    AeadCore, Error, KeyInit, XChaCha20Poly1305 as XChaCha,
+    aead::{Aead, AeadMutInPlace, Buffer, OsRng, Payload},
+};
+use p384::elliptic_curve::generic_array::GenericArray;
+use serde::{Deserialize, Serialize};
+
+/// Symmetric encryption.
+pub struct XChaCha20Poly1305 {
+    cipher: XChaCha,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Key {
+    key: Vec<u8>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Ciphertext {
+    ciphertext: Vec<u8>,
+    aead_context: AeadContext,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct AeadContext {
+    nonce: Vec<u8>,
+    pub aad: Option<Vec<u8>>,
+}
+
+impl XChaCha20Poly1305 {
+    pub fn new() -> (Key, Self) {
+        let key = XChaCha::generate_key(&mut OsRng);
+        (
+            Key { key: key.to_vec() },
+            Self {
+                cipher: XChaCha::new(&key),
+            },
+        )
+    }
+
+    /// Encrypt data. Optionally with
+    pub fn encrypt(&self, bytes: &[u8], aad: Option<&[u8]>) -> Result<Ciphertext, Error> {
+        let nonce = XChaCha::generate_nonce(&mut OsRng);
+        let payload = Ciphertext::get_payload_from(bytes, aad);
+        let ciphertext = self.cipher.encrypt(&nonce, payload)?;
+
+        Ok(Ciphertext {
+            ciphertext,
+            aead_context: AeadContext {
+                nonce: nonce.to_vec(),
+                aad: aad.map(|a| a.to_vec()),
+            },
+        })
+    }
+
+    /// Decrypt data.
+    pub fn decrypt(&self, ciphertext: &Ciphertext) -> Result<Vec<u8>, Error> {
+        let payload = ciphertext.get_payload();
+        let plaintext = self.cipher.decrypt(
+            GenericArray::from_slice(&ciphertext.aead_context.nonce),
+            payload,
+        )?;
+
+        Ok(plaintext)
+    }
+
+    /// Encrypt data in place.
+    pub fn encrypt_into(
+        &mut self,
+        aad: Option<&[u8]>,
+        buffer: &mut impl Buffer,
+    ) -> Result<AeadContext, Error> {
+        let nonce = XChaCha::generate_nonce(&mut OsRng);
+        let aad_payload = match aad {
+            Some(aad) => aad,
+            None => b"",
+        };
+        self.cipher.encrypt_in_place(&nonce, aad_payload, buffer)?;
+
+        Ok(AeadContext {
+            nonce: nonce.to_vec(),
+            aad: aad.map(|a| a.to_vec()),
+        })
+    }
+
+    /// Decrypt data in place.
+    pub fn decrypt_into(
+        &mut self,
+        aead_context: &AeadContext,
+        buffer: &mut impl Buffer,
+    ) -> Result<(), Error> {
+        self.cipher.decrypt_in_place(
+            GenericArray::from_slice(&aead_context.nonce),
+            aead_context.get_aad(),
+            buffer,
+        )
+    }
+}
+
+impl From<&Key> for XChaCha20Poly1305 {
+    fn from(key: &Key) -> Self {
+        Self {
+            cipher: XChaCha::new(GenericArray::from_slice(&key.key)),
+        }
+    }
+}
+
+impl Ciphertext {
+    pub fn get_payload(&self) -> Payload {
+        Self::get_payload_from(&self.ciphertext, self.aead_context.aad.as_deref())
+    }
+
+    pub fn get_payload_from<'a>(msg: &'a [u8], aad: Option<&'a [u8]>) -> Payload<'a, 'a> {
+        match aad {
+            Some(aad) => Payload { msg, aad },
+            None => Payload::from(msg),
+        }
+    }
+}
+
+impl AeadContext {
+    pub fn get_aad(&self) -> &[u8] {
+        match &self.aad {
+            Some(aad) => &aad,
+            None => b"",
+        }
+    }
+}
+
+mod xchacha20poly1305_test {
+    use tokio::{sync::OwnedRwLockMappedWriteGuard, time::error::Elapsed};
+
+    #[allow(unused)]
+    use super::{Ciphertext, Key, XChaCha20Poly1305};
+
+    #[test]
+    fn crypto() {
+        let message = b"Test message".to_vec();
+
+        let (key, xchacha1) = XChaCha20Poly1305::new();
+        let ciphertext = xchacha1.encrypt(&message, None).unwrap();
+
+        let xchacha2 = XChaCha20Poly1305::from(&key);
+        let cleartext = xchacha2.decrypt(&ciphertext).unwrap();
+
+        assert_eq!(cleartext, message);
+    }
+
+    #[test]
+    fn crypto_fail() {
+        let message = b"Test message".to_vec();
+
+        let (key, xchacha1) = XChaCha20Poly1305::new();
+        let mut ciphertext = xchacha1.encrypt(&message, None).unwrap();
+
+        ciphertext.ciphertext.push(0);
+
+        let xchacha2 = XChaCha20Poly1305::from(&key);
+        assert!(xchacha2.decrypt(&ciphertext).is_err());
+    }
+
+    #[test]
+    fn crypto_aad() {
+        let message = b"Test message".to_vec();
+        let aad = b"Test AAD".to_vec();
+
+        let (key, xchacha1) = XChaCha20Poly1305::new();
+        let ciphertext = xchacha1.encrypt(&message, Some(&aad)).unwrap();
+
+        let xchacha2 = XChaCha20Poly1305::from(&key);
+        let cleartext = xchacha2.decrypt(&ciphertext).unwrap();
+
+        assert_eq!(cleartext, message);
+        assert_eq!(ciphertext.aead_context.aad.unwrap(), aad);
+    }
+
+    #[test]
+    fn crypto_aad_fail() {
+        let message = b"Test message".to_vec();
+        let aad = b"Test AAD".to_vec();
+
+        let (key, xchacha1) = XChaCha20Poly1305::new();
+        let mut ciphertext = xchacha1.encrypt(&message, Some(&aad)).unwrap();
+
+        ciphertext.aead_context.aad = Some(b"Other AAD".to_vec());
+
+        let xchacha2 = XChaCha20Poly1305::from(&key);
+        assert!(xchacha2.decrypt(&ciphertext).is_err());
+    }
+
+    #[test]
+    fn crypto_inplace() {
+        let mut buffer: Vec<u8> = Vec::new();
+        buffer.append(&mut b"MyTestBuffer123".to_vec());
+
+        let original_buf = buffer.clone();
+
+        let (key, mut xchacha1) = XChaCha20Poly1305::new();
+        let aead_context = xchacha1.encrypt_into(None, &mut buffer).unwrap();
+
+        let mut xchacha2 = XChaCha20Poly1305::from(&key);
+        assert!(xchacha2.decrypt_into(&aead_context, &mut buffer).is_ok());
+
+        assert_eq!(buffer, original_buf);
+    }
+
+    #[test]
+    fn crypto_inplace_fail() {
+        let mut buffer: Vec<u8> = Vec::new();
+        buffer.append(&mut b"MyTestBuffer123".to_vec());
+
+        let (mut key, mut xchacha1) = XChaCha20Poly1305::new();
+        let aead_context = xchacha1.encrypt_into(None, &mut buffer).unwrap();
+
+        key.key[0] = if key.key[0] != 0 { 0 } else { 1 };
+
+        let mut xchacha2 = XChaCha20Poly1305::from(&key);
+        assert!(xchacha2.decrypt_into(&aead_context, &mut buffer).is_err());
+    }
+
+    #[test]
+    fn crypto_inplace_aad() {
+        let mut buffer: Vec<u8> = Vec::new();
+        buffer.append(&mut b"MyTestBuffer123".to_vec());
+
+        let aad = b"Test AAD";
+
+        let original_buf = buffer.clone();
+
+        let (key, mut xchacha1) = XChaCha20Poly1305::new();
+        let aead_context = xchacha1.encrypt_into(Some(aad), &mut buffer).unwrap();
+
+        let mut xchacha2 = XChaCha20Poly1305::from(&key);
+        assert!(xchacha2.decrypt_into(&aead_context, &mut buffer).is_ok());
+
+        assert_eq!(buffer, original_buf);
+    }
+
+    #[test]
+    fn crypto_inplace_aad_fail() {
+        let mut buffer: Vec<u8> = Vec::new();
+        buffer.append(&mut b"MyTestBuffer123".to_vec());
+
+        let aad = b"Test AAD";
+
+        let (mut key, mut xchacha1) = XChaCha20Poly1305::new();
+        let aead_context = xchacha1.encrypt_into(Some(aad), &mut buffer).unwrap();
+
+        key.key[0] = if key.key[0] != 0 { 0 } else { 1 };
+
+        let mut xchacha2 = XChaCha20Poly1305::from(&key);
+        assert!(xchacha2.decrypt_into(&aead_context, &mut buffer).is_err());
+    }
+}
