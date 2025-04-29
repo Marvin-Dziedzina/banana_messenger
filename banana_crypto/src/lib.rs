@@ -1,6 +1,7 @@
 pub mod argon2;
+pub mod chacha20poly1305;
 pub mod ed25519;
-pub mod p384;
-pub mod xchacha20poly1305;
+pub mod sha2;
+pub mod x25519;
 
-pub use rustls;
+pub use zeroize;

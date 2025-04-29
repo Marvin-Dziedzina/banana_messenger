@@ -6,10 +6,10 @@ edition = "2024"
 [dependencies]
 argon2 = { version = "0.5.3", features = ["password-hash"] }
 chacha20poly1305 = "0.10.1"
-p384 = "0.13.1"
-ed25519 = "2.2.3"
-ed25519-dalek = { version = "2.1.1", features = ["rand_core", "serde"] }
-rustls = "0.23.26"
-tokio = { workspace = true }
-rusqlite = { workspace = true }
+ed25519-dalek = { version = "2.1.1", features = ["serde", "rand_core"] }
+x25519-dalek = { version = "2.0.1", features = ["serde"] }
+hkdf = "0.12.4"
+sha2 = "0.10.8"
+aead = "0.5.2"
+zeroize = { version = "1.8.1", features = ["zeroize_derive"] }
 serde = { workspace = true }
