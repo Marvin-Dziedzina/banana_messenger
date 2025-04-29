@@ -48,6 +48,7 @@ impl Argon2 {
     }
 }
 
+#[cfg(test)]
 mod test_argon2 {
     #[allow(unused)]
     use super::Argon2;

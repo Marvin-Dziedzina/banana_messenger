@@ -127,9 +127,8 @@ impl AeadContext {
     }
 }
 
+#[cfg(test)]
 mod xchacha20poly1305_test {
-    use tokio::{sync::OwnedRwLockMappedWriteGuard, time::error::Elapsed};
-
     #[allow(unused)]
     use super::{Ciphertext, Key, XChaCha20Poly1305};
 

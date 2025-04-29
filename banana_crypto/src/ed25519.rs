@@ -58,6 +58,7 @@ impl From<SigningKey> for KeyPair {
     }
 }
 
+#[cfg(test)]
 mod test_ed25519 {
     #[allow(unused)]
     use super::KeyPair;
