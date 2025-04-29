@@ -9,6 +9,7 @@ chacha20poly1305 = "0.10.1"
 p384 = "0.13.1"
 ed25519 = "2.2.3"
 ed25519-dalek = { version = "2.1.1", features = ["rand_core", "serde"] }
+rustls = "0.23.26"
 tokio = { workspace = true }
 rusqlite = { workspace = true }
 serde = { workspace = true }
