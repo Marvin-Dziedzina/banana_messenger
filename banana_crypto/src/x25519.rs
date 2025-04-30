@@ -43,7 +43,7 @@ impl KeyExchange {
     }
 
     /// Get the public component.
-    pub fn get_public(&self) -> PublicKey {
+    pub fn get_public_component(&self) -> PublicKey {
         self.public_component
     }
 
@@ -75,8 +75,8 @@ mod test_x25519 {
         let exchange1 = KeyExchange::new();
         let exchange2 = KeyExchange::new();
 
-        let pub1 = exchange1.get_public();
-        let pub2 = exchange2.get_public();
+        let pub1 = exchange1.get_public_component();
+        let pub2 = exchange2.get_public_component();
 
         assert_ne!(exchange1.public_component, exchange2.public_component);
         assert_eq!(exchange1.public_component, pub1);
