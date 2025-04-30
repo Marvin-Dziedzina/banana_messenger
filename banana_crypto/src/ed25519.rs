@@ -1,8 +1,8 @@
 use aead::OsRng;
-use ed25519_dalek::{Signature, SigningKey, VerifyingKey, ed25519::signature::SignerMut};
+use ed25519_dalek::{Signature, SigningKey, ed25519::signature::SignerMut};
 use serde::{Deserialize, Serialize};
 
-pub use ed25519_dalek::SignatureError;
+pub use ed25519_dalek::{SignatureError, VerifyingKey};
 use zeroize::ZeroizeOnDrop;
 
 /// The [`KeyPair`] that is used to sign messages and verify [`SignatureBlob`]s.
