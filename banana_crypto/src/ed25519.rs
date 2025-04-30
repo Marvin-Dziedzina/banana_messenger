@@ -7,7 +7,7 @@ use zeroize::ZeroizeOnDrop;
 
 /// The [`KeyPair`] that is used to sign messages and verify [`SignatureBlob`]s.
 #[derive(ZeroizeOnDrop)]
-pub struct KeyPair {
+pub struct SignerKeyPair {
     signing_key: ed25519_dalek::SigningKey,
 }
 
@@ -18,7 +18,7 @@ pub struct SignatureBlob {
     pub msg: Vec<u8>,
 }
 
-impl KeyPair {
+impl SignerKeyPair {
     pub fn new() -> Self {
         Self {
             signing_key: ed25519_dalek::SigningKey::generate(&mut OsRng),
@@ -56,7 +56,7 @@ pub fn verify(
     verifying_key.verify_strict(&signature_blob.msg, &signature_blob.signature)
 }
 
-impl From<SigningKey> for KeyPair {
+impl From<SigningKey> for SignerKeyPair {
     fn from(signing_key: SigningKey) -> Self {
         Self { signing_key }
     }
@@ -65,14 +65,14 @@ impl From<SigningKey> for KeyPair {
 #[cfg(test)]
 mod test_ed25519 {
     #[allow(unused)]
-    use super::KeyPair;
+    use super::SignerKeyPair;
 
     #[allow(unused)]
     const MSG: &[u8] = b"Test Message";
 
     #[test]
     fn key_pair() {
-        let mut key_pair = KeyPair::new();
+        let mut key_pair = SignerKeyPair::new();
         let signature_blob = key_pair.sign(MSG);
 
         assert!(
@@ -84,7 +84,7 @@ mod test_ed25519 {
 
     #[test]
     fn signature_blob() {
-        let mut key_pair = KeyPair::new();
+        let mut key_pair = SignerKeyPair::new();
         let signature_blob = key_pair.sign(MSG);
 
         assert_eq!(signature_blob.msg, MSG);
@@ -92,7 +92,7 @@ mod test_ed25519 {
 
     #[test]
     fn key_pair_fail() {
-        let mut key_pair = KeyPair::new();
+        let mut key_pair = SignerKeyPair::new();
         let mut signature_blob = key_pair.sign(MSG);
 
         signature_blob.msg[0] = if signature_blob.msg[0] != 0 { 0 } else { 1 };
@@ -107,7 +107,7 @@ mod test_ed25519 {
 
     #[test]
     fn verify_outer() {
-        let mut key_pair = KeyPair::new();
+        let mut key_pair = SignerKeyPair::new();
         let signature_blob = key_pair.sign(MSG);
 
         assert!(super::verify(&key_pair.get_verifying_key(), &signature_blob).is_ok());
@@ -115,7 +115,7 @@ mod test_ed25519 {
 
     #[test]
     fn get_verify_key() {
-        let key_pair = KeyPair::new();
+        let key_pair = SignerKeyPair::new();
 
         assert_eq!(
             key_pair.signing_key.verifying_key(),
