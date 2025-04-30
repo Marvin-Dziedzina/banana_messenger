@@ -26,7 +26,7 @@ impl SignerKeyPair {
     }
 
     /// Sign a byte array.
-    fn sign(&mut self, msg: &[u8]) -> SignatureBlob {
+    pub fn sign(&mut self, msg: &[u8]) -> SignatureBlob {
         SignatureBlob {
             signature: self.signing_key.sign(msg),
             msg: msg.to_vec(),
@@ -34,7 +34,7 @@ impl SignerKeyPair {
     }
 
     /// Verify a [`SignatureBlob`] with the supplied [`VerifyingKey`].
-    fn verify(
+    pub fn verify(
         &self,
         verifying_key: &VerifyingKey,
         signature_blob: &SignatureBlob,
@@ -43,7 +43,7 @@ impl SignerKeyPair {
     }
 
     /// Get the [`VerifyingKey`] from the [`KeyPair`].
-    fn get_verifying_key(&self) -> VerifyingKey {
+    pub fn get_verifying_key(&self) -> VerifyingKey {
         self.signing_key.verifying_key()
     }
 }
