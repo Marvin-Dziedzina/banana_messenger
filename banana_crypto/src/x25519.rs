@@ -3,12 +3,18 @@ use x25519_dalek::EphemeralSecret;
 
 pub use x25519_dalek::{PublicKey, SharedSecret};
 
+/// Contains both the secret and public components of an X25519 key exchange.
+///
+/// The public component should be shared with the other party, and their public component should be received in return.
+/// Use [`KeyExchange::compute_shared_secret`] with the received public component to compute a [`SharedSecret`].
+/// Once both parties perform this computation, they will derive the same shared secret.
 pub struct KeyExchange {
     secret: EphemeralSecret,
     public: PublicKey,
 }
 
 impl KeyExchange {
+    /// Generate a new secret and public component.
     pub fn new() -> Self {
         let secret = EphemeralSecret::random_from_rng(OsRng);
         let public = PublicKey::from(&secret);
@@ -16,12 +22,17 @@ impl KeyExchange {
         Self { secret, public }
     }
 
+    /// Get the public component.
     pub fn get_public(&self) -> PublicKey {
         self.public
     }
 
-    pub fn compute_shared_secret(self, public: PublicKey) -> SharedSecret {
-        self.secret.diffie_hellman(&public)
+    /// Generates a [`SharedSecret`] from the other party's public key component.
+    ///
+    /// The resulting [`SharedSecret`] can be used as a cryptographic key, but must first be parsed.
+    /// Parsing is required to ensure the secret is suitable and secure for cryptographic use.
+    pub fn compute_shared_secret(self, other_public: PublicKey) -> SharedSecret {
+        self.secret.diffie_hellman(&other_public)
     }
 }
 

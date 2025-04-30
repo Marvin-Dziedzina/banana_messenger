@@ -5,10 +5,10 @@ use argon2::{
 };
 use serde::{Deserialize, Serialize};
 
-/// The Argon2 hashing algorithm.
+/// Implementation of the Argon2 hashing algorithm.
 pub struct Argon2;
 
-/// A Argon2 hash. Will be used to verify passwords.
+/// Represents an Argon2 hash used to verify passwords.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Argon2Hash {
     hash: String,
@@ -20,7 +20,7 @@ impl Argon2 {
         SaltString::generate(&mut OsRng)
     }
 
-    /// Hash a password.
+    /// Hashes a password using the Argon2 algorithm
     ///
     /// **Do not use to get a cryptographic key. Use [`Self::hash_key_derivation`]**
     fn hash(password: &[u8]) -> Result<Argon2Hash, password_hash::Error> {
@@ -33,13 +33,13 @@ impl Argon2 {
         })
     }
 
-    /// Verify a password and a hash to be the same.
+    /// Verifies that a password matches the given Argon2 hash.
     fn verify(hash: &Argon2Hash, password: &[u8]) -> Result<(), password_hash::Error> {
         let password_hash = PasswordHash::new(&hash.hash)?;
         Argon::default().verify_password(password, &password_hash)
     }
 
-    /// Hashed a password into a buffer of any size.
+    /// Hashes a password into a buffer of arbitrary size.
     ///
     /// **This function generates an output that can be used as cryptographic key**
     fn hash_key_derivation(password: &[u8], out: &mut [u8]) -> Result<(), argon2::Error> {

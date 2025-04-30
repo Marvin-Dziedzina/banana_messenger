@@ -33,7 +33,7 @@ impl KeyPair {
         }
     }
 
-    /// Verify a [`SignatureBlob`] with the [`SignatureBlob`] internal signing key.
+    /// Verify a [`SignatureBlob`] with the supplied [`VerifyingKey`].
     fn verify(
         &self,
         verifying_key: &VerifyingKey,
@@ -42,13 +42,13 @@ impl KeyPair {
         verify(verifying_key, signature_blob)
     }
 
-    /// Get the verifying key from the singing key.
+    /// Get the [`VerifyingKey`] from the [`KeyPair`].
     fn get_verifying_key(&self) -> VerifyingKey {
         self.signing_key.verifying_key()
     }
 }
 
-/// Verify a [`SignatureBlob`] with the [`SignatureBlob`] internal signing key.
+/// Verify a [`SignatureBlob`] with the supplied [`VerifyingKey`].
 pub fn verify(
     verifying_key: &VerifyingKey,
     signature_blob: &SignatureBlob,

@@ -9,7 +9,7 @@ use sha2::Sha256;
 use x25519_dalek::SharedSecret;
 use zeroize::ZeroizeOnDrop;
 
-/// Symmetric encryption.
+/// Symmetric encryption. ChaCha20Poly1305 is used.
 #[derive(ZeroizeOnDrop)]
 pub struct SymmetricEncryption {
     cipher: ChaCha20Poly1305,
@@ -23,14 +23,14 @@ pub struct SecretKey {
     key: Vec<u8>,
 }
 
-/// Ciphertext that stores the encrypted message the nonce and associated data.
-#[derive(Clone, Serialize, Deserialize)]
+/// Ciphertext that stores the encrypted message, nonce, and associated data.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Ciphertext {
     ciphertext: Vec<u8>,
     aead_context: AeadContext,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AeadContext {
     nonce: Vec<u8>,
     pub aad: Option<Vec<u8>>,
