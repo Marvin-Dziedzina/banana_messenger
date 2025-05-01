@@ -51,8 +51,8 @@ impl KeyExchange {
     ///
     /// The resulting [`SharedSecret`] can be used as a cryptographic key, but must first be parsed.
     /// Parsing is required to ensure the secret is suitable and secure for cryptographic use.
-    pub fn compute_shared_secret(self, other_public: PublicKey) -> SharedSecret {
-        self.secret_component.diffie_hellman(&other_public)
+    pub fn compute_shared_secret(self, other_public_component: PublicKey) -> SharedSecret {
+        self.secret_component.diffie_hellman(&other_public_component)
     }
 }
 
