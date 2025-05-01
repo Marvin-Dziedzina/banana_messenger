@@ -10,6 +10,8 @@ use x25519_dalek::SharedSecret;
 use zeroize::ZeroizeOnDrop;
 
 /// Symmetric encryption. ChaCha20Poly1305 is used.
+///
+/// The [`SymmetricEncryption`] can be constructed from [`SharedSecret`]
 #[derive(ZeroizeOnDrop)]
 pub struct SymmetricEncryption {
     cipher: ChaCha20Poly1305,
@@ -48,7 +50,7 @@ impl SymmetricEncryption {
     }
 
     /// Encrypt data. Optionally with associated data.
-    fn encrypt(&self, bytes: &[u8], aad: Option<&[u8]>) -> Result<Ciphertext, Error> {
+    pub fn encrypt(&self, bytes: &[u8], aad: Option<&[u8]>) -> Result<Ciphertext, Error> {
         let nonce = ChaCha20Poly1305::generate_nonce(&mut OsRng);
         let payload = Ciphertext::get_payload_from(bytes, aad);
         let ciphertext = self.cipher.encrypt(&nonce, payload)?;
@@ -63,7 +65,7 @@ impl SymmetricEncryption {
     }
 
     /// Decrypt data.
-    fn decrypt(&self, ciphertext: &Ciphertext) -> Result<Vec<u8>, Error> {
+    pub fn decrypt(&self, ciphertext: &Ciphertext) -> Result<Vec<u8>, Error> {
         let payload = ciphertext.get_payload();
         let plaintext = self.cipher.decrypt(
             GenericArray::from_slice(&ciphertext.aead_context.nonce),
