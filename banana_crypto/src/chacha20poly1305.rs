@@ -13,7 +13,7 @@ use zeroize::ZeroizeOnDrop;
 ///
 /// The [`SymmetricEncryption`] can be constructed from [`SharedSecret`]
 #[derive(ZeroizeOnDrop)]
-pub struct SymmetricEncryption {
+pub struct Cipher {
     cipher: ChaCha20Poly1305,
 }
 
@@ -38,7 +38,7 @@ pub struct AeadContext {
     pub aad: Option<Vec<u8>>,
 }
 
-impl SymmetricEncryption {
+impl Cipher {
     pub fn new() -> (SecretKey, Self) {
         let key = ChaCha20Poly1305::generate_key(&mut OsRng);
         (
@@ -108,7 +108,7 @@ impl SymmetricEncryption {
     }
 }
 
-impl From<SecretKey> for SymmetricEncryption {
+impl From<SecretKey> for Cipher {
     fn from(key: SecretKey) -> Self {
         Self {
             cipher: ChaCha20Poly1305::new(Key::from_slice(&key.key)),
@@ -116,7 +116,7 @@ impl From<SecretKey> for SymmetricEncryption {
     }
 }
 
-impl From<&SecretKey> for SymmetricEncryption {
+impl From<&SecretKey> for Cipher {
     fn from(key: &SecretKey) -> Self {
         Self {
             cipher: ChaCha20Poly1305::new(Key::from_slice(&key.key)),
@@ -124,7 +124,7 @@ impl From<&SecretKey> for SymmetricEncryption {
     }
 }
 
-impl From<SharedSecret> for SymmetricEncryption {
+impl From<SharedSecret> for Cipher {
     fn from(shared_secret: SharedSecret) -> Self {
         let hk = Hkdf::<Sha256>::new(None, shared_secret.as_bytes());
         let mut okm = [0u8; 32];
@@ -160,16 +160,16 @@ impl AeadContext {
 #[cfg(test)]
 mod test_chacha20poly1305 {
     #[allow(unused)]
-    use super::{Ciphertext, SecretKey, SymmetricEncryption};
+    use super::{Cipher, Ciphertext, SecretKey};
 
     #[test]
     fn crypto() {
         let message = b"Test message".to_vec();
 
-        let (key, chacha1) = SymmetricEncryption::new();
+        let (key, chacha1) = Cipher::new();
         let ciphertext = chacha1.encrypt(&message, None).unwrap();
 
-        let chacha2 = SymmetricEncryption::from(&key);
+        let chacha2 = Cipher::from(&key);
         let cleartext = chacha2.decrypt(&ciphertext).unwrap();
 
         assert_eq!(cleartext, message);
@@ -179,12 +179,12 @@ mod test_chacha20poly1305 {
     fn crypto_fail() {
         let message = b"Test message".to_vec();
 
-        let (key, chacha1) = SymmetricEncryption::new();
+        let (key, chacha1) = Cipher::new();
         let mut ciphertext = chacha1.encrypt(&message, None).unwrap();
 
         ciphertext.ciphertext.push(0);
 
-        let chacha2 = SymmetricEncryption::from(&key);
+        let chacha2 = Cipher::from(&key);
         assert!(chacha2.decrypt(&ciphertext).is_err());
     }
 
@@ -193,10 +193,10 @@ mod test_chacha20poly1305 {
         let message = b"Test message".to_vec();
         let aad = b"Test AAD".to_vec();
 
-        let (key, chacha1) = SymmetricEncryption::new();
+        let (key, chacha1) = Cipher::new();
         let ciphertext = chacha1.encrypt(&message, Some(&aad)).unwrap();
 
-        let chacha2 = SymmetricEncryption::from(&key);
+        let chacha2 = Cipher::from(&key);
         let cleartext = chacha2.decrypt(&ciphertext).unwrap();
 
         assert_eq!(cleartext, message);
@@ -208,12 +208,12 @@ mod test_chacha20poly1305 {
         let message = b"Test message".to_vec();
         let aad = b"Test AAD".to_vec();
 
-        let (key, chacha1) = SymmetricEncryption::new();
+        let (key, chacha1) = Cipher::new();
         let mut ciphertext = chacha1.encrypt(&message, Some(&aad)).unwrap();
 
         ciphertext.aead_context.aad = Some(b"Other AAD".to_vec());
 
-        let chacha2 = SymmetricEncryption::from(&key);
+        let chacha2 = Cipher::from(&key);
         assert!(chacha2.decrypt(&ciphertext).is_err());
     }
 
@@ -224,10 +224,10 @@ mod test_chacha20poly1305 {
 
         let original_buf = buffer.clone();
 
-        let (key, mut chacha1) = SymmetricEncryption::new();
+        let (key, mut chacha1) = Cipher::new();
         let aead_context = chacha1.encrypt_into(None, &mut buffer).unwrap();
 
-        let mut chacha2 = SymmetricEncryption::from(&key);
+        let mut chacha2 = Cipher::from(&key);
         assert!(chacha2.decrypt_into(&aead_context, &mut buffer).is_ok());
 
         assert_eq!(buffer, original_buf);
@@ -238,12 +238,12 @@ mod test_chacha20poly1305 {
         let mut buffer: Vec<u8> = Vec::new();
         buffer.append(&mut b"MyTestBuffer123".to_vec());
 
-        let (mut key, mut chacha1) = SymmetricEncryption::new();
+        let (mut key, mut chacha1) = Cipher::new();
         let aead_context = chacha1.encrypt_into(None, &mut buffer).unwrap();
 
         key.key[0] = if key.key[0] != 0 { 0 } else { 1 };
 
-        let mut chacha2 = SymmetricEncryption::from(&key);
+        let mut chacha2 = Cipher::from(&key);
         assert!(chacha2.decrypt_into(&aead_context, &mut buffer).is_err());
     }
 
@@ -256,10 +256,10 @@ mod test_chacha20poly1305 {
 
         let original_buf = buffer.clone();
 
-        let (key, mut chacha1) = SymmetricEncryption::new();
+        let (key, mut chacha1) = Cipher::new();
         let aead_context = chacha1.encrypt_into(Some(aad), &mut buffer).unwrap();
 
-        let mut chacha2 = SymmetricEncryption::from(&key);
+        let mut chacha2 = Cipher::from(&key);
         assert!(chacha2.decrypt_into(&aead_context, &mut buffer).is_ok());
 
         assert_eq!(buffer, original_buf);
@@ -272,12 +272,12 @@ mod test_chacha20poly1305 {
 
         let aad = b"Test AAD";
 
-        let (mut key, mut chacha1) = SymmetricEncryption::new();
+        let (mut key, mut chacha1) = Cipher::new();
         let aead_context = chacha1.encrypt_into(Some(aad), &mut buffer).unwrap();
 
         key.key[0] = if key.key[0] != 0 { 0 } else { 1 };
 
-        let mut chacha2 = SymmetricEncryption::from(&key);
+        let mut chacha2 = Cipher::from(&key);
         assert!(chacha2.decrypt_into(&aead_context, &mut buffer).is_err());
     }
 }
