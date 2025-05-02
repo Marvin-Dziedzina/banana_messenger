@@ -1,6 +1,6 @@
 use aead::OsRng;
 use chacha20poly1305::{
-    AeadCore, ChaCha20Poly1305, Error, Key, KeyInit,
+    AeadCore, ChaCha20Poly1305, Key, KeyInit,
     aead::{Aead, AeadMutInPlace, Buffer, Payload, generic_array::GenericArray},
 };
 use hkdf::Hkdf;
@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use x25519_dalek::SharedSecret;
 use zeroize::ZeroizeOnDrop;
+
+pub use chacha20poly1305::Error;
 
 /// Symmetric encryption. ChaCha20Poly1305 is used.
 ///
@@ -82,10 +84,7 @@ impl Cipher {
         buffer: &mut impl Buffer,
     ) -> Result<AeadContext, Error> {
         let nonce = ChaCha20Poly1305::generate_nonce(&mut OsRng);
-        let aad_payload = match aad {
-            Some(aad) => aad,
-            None => b"",
-        };
+        let aad_payload = aad.unwrap_or(b"");
         self.cipher.encrypt_in_place(&nonce, aad_payload, buffer)?;
 
         Ok(AeadContext {
@@ -151,7 +150,7 @@ impl Ciphertext {
 impl AeadContext {
     pub fn get_aad(&self) -> &[u8] {
         match &self.aad {
-            Some(aad) => &aad,
+            Some(aad) => aad,
             None => b"",
         }
     }

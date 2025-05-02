@@ -6,7 +6,7 @@ pub use ed25519_dalek::{SignatureError, VerifyingKey};
 use zeroize::ZeroizeOnDrop;
 
 /// The [`KeyPair`] that is used to sign messages and verify [`SignatureBlob`]s.
-#[derive(ZeroizeOnDrop)]
+#[derive(Clone, ZeroizeOnDrop)]
 pub struct SignerKeyPair {
     signing_key: ed25519_dalek::SigningKey,
 }
@@ -59,6 +59,12 @@ pub fn verify(
 impl From<SigningKey> for SignerKeyPair {
     fn from(signing_key: SigningKey) -> Self {
         Self { signing_key }
+    }
+}
+
+impl Default for SignerKeyPair {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

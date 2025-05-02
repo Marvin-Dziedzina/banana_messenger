@@ -17,8 +17,8 @@ pub use x25519_dalek::{PublicKey, SharedSecret};
 /// let exchange1 = KeyExchange::new();
 /// let exchange2 = KeyExchange::new();
 ///
-/// let pub1 = exchange1.get_public();
-/// let pub2 = exchange2.get_public();
+/// let pub1 = exchange1.get_public_component();
+/// let pub2 = exchange2.get_public_component();
 ///
 /// let shared1 = exchange1.compute_shared_secret(pub2);
 /// let shared2 = exchange2.compute_shared_secret(pub1);
@@ -52,7 +52,8 @@ impl KeyExchange {
     /// The resulting [`SharedSecret`] can be used as a cryptographic key, but must first be parsed.
     /// Parsing is required to ensure the secret is suitable and secure for cryptographic use.
     pub fn compute_shared_secret(self, other_public_component: PublicKey) -> SharedSecret {
-        self.secret_component.diffie_hellman(&other_public_component)
+        self.secret_component
+            .diffie_hellman(&other_public_component)
     }
 }
 
@@ -63,6 +64,12 @@ impl From<EphemeralSecret> for KeyExchange {
             secret_component: ephemeral_secret,
             public_component: public,
         }
+    }
+}
+
+impl Default for KeyExchange {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
