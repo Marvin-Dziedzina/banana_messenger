@@ -1,0 +1,14 @@
+[package]
+name = "netwrk"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bincode = { version = "2.0.1", features = ["serde"] }
+tokio = { workspace = true }
+log = { workspace = true }
+serde = { workspace = true }
+banana_crypto = { path = "../banana_crypto" }
+
+[dev-dependencies]
+env_logger = "0.11.8"
