@@ -70,13 +70,18 @@ where
         other_verifying_key: VerifyingKey,
     ) -> Result<Self, Error> {
         let tcp_stream = TcpStream::connect(addr).await?;
-        Self::from_tcp_stream(tcp_stream, signer_key_pair, other_verifying_key).await
+        Self::from_tcp_stream(
+            tcp_stream,
+            Arc::new(Mutex::new(signer_key_pair)),
+            other_verifying_key,
+        )
+        .await
     }
 
     /// Creates a [`SecureChannel`] from a [`TcpStream`].
-    async fn from_tcp_stream(
+    pub async fn from_tcp_stream(
         tcp_stream: TcpStream,
-        signer_key_pair: SignerKeyPair,
+        signer_key_pair: Arc<Mutex<SignerKeyPair>>,
         other_verifying_key: VerifyingKey,
     ) -> Result<Self, Error> {
         let (owned_read_half, owned_write_half) = tcp_stream.into_split();
@@ -84,7 +89,6 @@ where
         let writer = Arc::new(Mutex::new(BufWriter::new(owned_write_half)));
 
         let is_alive = Arc::new(AtomicBool::new(true));
-        let signer_key_pair = Arc::new(Mutex::new(signer_key_pair));
 
         let message_buffer = Arc::new(Mutex::new(VecDeque::with_capacity(128)));
 
@@ -193,13 +197,12 @@ where
             };
 
             let network_message = tokio::select! {
-                _ = shutdown_channel_receiver.changed() => {
+                _ = shutdown_channel_receiver.changed() =>
                     if *shutdown_channel_receiver.borrow() {
                         break;
                     } else {
                         continue;
-                    };
-                }
+                    },
                 result = Self::read_encrypted(&reader, &other_verifying_key) => {
                     match result {
                         Ok(network_message) => network_message,
@@ -489,11 +492,18 @@ where
 
 #[cfg(test)]
 mod test_secure_channel {
-    use std::{net::SocketAddr, sync::Once, time::Duration};
+    use std::{
+        net::SocketAddr,
+        sync::{Arc, Once},
+        time::Duration,
+    };
 
     use banana_crypto::ed25519::{SignerKeyPair, VerifyingKey};
     use serde::{Deserialize, Serialize};
-    use tokio::net::{TcpListener, ToSocketAddrs};
+    use tokio::{
+        net::{TcpListener, ToSocketAddrs},
+        sync::Mutex,
+    };
 
     use crate::secure_channel::{CONNECTION_TIMEOUT_S, KEEP_ALIVE_INTERVALL_S};
 
@@ -624,9 +634,13 @@ mod test_secure_channel {
     ) -> SecureChannel<M> {
         let listener = TcpListener::bind(addr).await.unwrap();
         let tcp_stream = listener.accept().await.map(|(stream, _)| stream).unwrap();
-        SecureChannel::from_tcp_stream(tcp_stream, signer_key_pair, other_verifying_key)
-            .await
-            .unwrap()
+        SecureChannel::from_tcp_stream(
+            tcp_stream,
+            Arc::new(Mutex::new(signer_key_pair)),
+            other_verifying_key,
+        )
+        .await
+        .unwrap()
     }
 
     fn init_env_logger() {
