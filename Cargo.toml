@@ -2,7 +2,7 @@
 members = ["banana_crypto", "banana_messenger_core", "banana_train", "netwrk"]
 
 [workspace.dependencies]
-tokio = { version = "1.44.2", features = ["full"] }
+tokio = { version = "1.45.0", features = ["full"] }
 rusqlite = { version = "0.35.0", features = ["bundled"] }
 rayon = "1.10.0"
 serde = { version = "1.0.219", features = ["derive"] }
