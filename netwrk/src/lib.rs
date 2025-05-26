@@ -28,6 +28,7 @@ where
 #[derive(Debug, Serialize, Deserialize, zeroize::Zeroize, zeroize::ZeroizeOnDrop)]
 pub struct SerializableKeypair {
     private: Vec<u8>,
+    #[zeroize(skip)]
     public: Vec<u8>,
 }
 
