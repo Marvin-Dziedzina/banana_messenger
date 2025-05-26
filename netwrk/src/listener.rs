@@ -36,6 +36,7 @@ where
     new_connection_notify: Arc<Notify>,
 
     keypair: Arc<SerializableKeypair>,
+    max_buffered_messages: usize,
 }
 
 impl<M> Listener<M>
@@ -46,6 +47,7 @@ where
     pub async fn bind<A: ToSocketAddrs>(
         addr: A,
         keypair: Option<SerializableKeypair>,
+        max_buffered_messages: usize,
     ) -> Result<(Self, SerializableKeypair), Error> {
         let keypair = match keypair {
             Some(keypair) => keypair,
@@ -63,6 +65,7 @@ where
                 new_connection_notify: Arc::new(Notify::new()),
 
                 keypair: Arc::new(keypair.clone()),
+                max_buffered_messages,
             },
             keypair,
         ))
@@ -80,7 +83,7 @@ where
             return Err(Error::AlreadyRunning);
         };
 
-        Self::accept_incoming(&self.listener, &self.keypair).await
+        Self::accept_incoming(&self.listener, &self.keypair, self.max_buffered_messages).await
     }
 
     /// Accept the next connection if ready else return `Ok(None)`.
@@ -110,6 +113,7 @@ where
                     tcp_stream,
                     Some(self.keypair.as_ref().to_owned()),
                     HandshakeType::Responder,
+                    self.max_buffered_messages,
                 )
                 .await?
                 .0,
@@ -180,6 +184,7 @@ where
                 self.stream_buf.clone(),
                 self.new_connection_notify.clone(),
                 self.keypair.clone(),
+                self.max_buffered_messages,
             )));
             Ok(())
         } else {
@@ -208,6 +213,7 @@ where
         stream_buf: Arc<Mutex<VecDeque<(ReliableStream<M>, SocketAddr)>>>,
         new_connection_notify: Arc<Notify>,
         keypair: Arc<SerializableKeypair>,
+        max_buffered_messages: usize,
     ) -> Result<(), Error> {
         loop {
             if is_dead.load(Ordering::Acquire) {
@@ -215,7 +221,7 @@ where
             };
 
             let res_conn = tokio::select! {
-                conn = Self::accept_incoming(&listener, &keypair) => {conn}
+                conn = Self::accept_incoming(&listener, &keypair, max_buffered_messages) => {conn}
                 _ = tokio::time::sleep(CONNECTION_ACCEPTION_TIMEOUT) => {
                     continue
                 }
@@ -251,12 +257,14 @@ where
     async fn accept_incoming(
         listener: &Arc<Mutex<TcpListener>>,
         keypair: &Arc<SerializableKeypair>,
+        max_buffered_messages: usize,
     ) -> Result<(ReliableStream<M>, SocketAddr), Error> {
         let (tcp_stream, addr) = listener.lock().await.accept().await?;
         let (stream, _) = ReliableStream::from_stream(
             tcp_stream,
             Some(keypair.as_ref().to_owned()),
             HandshakeType::Responder,
+            max_buffered_messages,
         )
         .await?;
 
@@ -274,6 +282,7 @@ mod test_listener {
     use crate::{listener::Listener, reliable_stream::ReliableStream};
 
     const ADDR: &str = "127.0.0.1:0";
+    const MAX_BUFFERED_MESSAGES: usize = 10;
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
     enum TestMessage {
@@ -283,7 +292,9 @@ mod test_listener {
 
     #[tokio::test]
     async fn test_listener() {
-        let (listener, keypair) = Listener::<TestMessage>::bind(ADDR, None).await.unwrap();
+        let (listener, keypair) = Listener::<TestMessage>::bind(ADDR, None, MAX_BUFFERED_MESSAGES)
+            .await
+            .unwrap();
         let local_addr = listener.local_address().await.unwrap();
 
         let initiator_handle = connect_stream_to_listener(local_addr).await;
@@ -318,6 +329,10 @@ mod test_listener {
             crate::Error,
         >,
     > {
-        tokio::spawn(ReliableStream::connect_initiator(addr, None))
+        tokio::spawn(ReliableStream::connect_initiator(
+            addr,
+            None,
+            MAX_BUFFERED_MESSAGES,
+        ))
     }
 }

@@ -17,8 +17,6 @@ use crate::{
     serialisable_keypair::SerializableKeypair,
 };
 
-const MESSAGE_CHANNEL_BUFFER_SIZE: usize = 64;
-
 #[derive(Debug)]
 pub struct ReliableStream<M>
 where
@@ -40,16 +38,30 @@ where
     pub async fn connect_initiator<A: ToSocketAddrs>(
         addr: A,
         keypair: Option<SerializableKeypair>,
+        max_buffered_messages: usize,
     ) -> Result<(Self, SerializableKeypair), Error> {
-        Self::connect_handshake(addr, keypair, HandshakeType::Initiator).await
+        Self::connect_handshake(
+            addr,
+            keypair,
+            HandshakeType::Initiator,
+            max_buffered_messages,
+        )
+        .await
     }
 
     /// Create a new responder stream. Will return a newly generated [`SerializableKeypair`] if `keypair` is [`None`] otherwise it will return the supplied [`SerializableKeypair`].
     pub async fn connect_responder<A: ToSocketAddrs>(
         addr: A,
         keypair: Option<SerializableKeypair>,
+        max_buffered_messages: usize,
     ) -> Result<(Self, SerializableKeypair), Error> {
-        Self::connect_handshake(addr, keypair, HandshakeType::Responder).await
+        Self::connect_handshake(
+            addr,
+            keypair,
+            HandshakeType::Responder,
+            max_buffered_messages,
+        )
+        .await
     }
 
     /// Connect with a [`HandshakeType`]. Will return a newly generated [`SerializableKeypair`] if `keypair` is [`None`] otherwise it will return the supplied [`SerializableKeypair`].
@@ -57,12 +69,13 @@ where
         addr: A,
         keypair: Option<SerializableKeypair>,
         handshake_type: crate::encrypted_socket::HandshakeType,
+        max_buffered_messages: usize,
     ) -> Result<(Self, SerializableKeypair), Error> {
         let (inner, keypair) = match handshake_type {
             HandshakeType::Initiator => EncryptedSocket::new_initiator(addr, keypair).await,
             HandshakeType::Responder => EncryptedSocket::new_responder(addr, keypair).await,
         }?;
-        let netwrk_stream = Self::from_inner_stream(inner).await?;
+        let netwrk_stream = Self::from_inner_stream(inner, max_buffered_messages).await?;
 
         Ok((netwrk_stream, keypair))
     }
@@ -72,20 +85,23 @@ where
         tcp_stream: TcpStream,
         keypair: Option<SerializableKeypair>,
         handshake_type: crate::encrypted_socket::HandshakeType,
+        max_buffered_messages: usize,
     ) -> Result<(Self, SerializableKeypair), Error> {
         let (inner, keypair) =
             EncryptedSocket::from_tcp_stream(tcp_stream, keypair, handshake_type).await?;
-        let netwrk_stream = Self::from_inner_stream(inner).await?;
+        let netwrk_stream = Self::from_inner_stream(inner, max_buffered_messages).await?;
 
         Ok((netwrk_stream, keypair))
     }
 
     /// Create a [`Stream`] from a [`InnerStream`].
-    pub async fn from_inner_stream(inner_stream: EncryptedSocket) -> Result<Self, Error> {
+    pub async fn from_inner_stream(
+        inner_stream: EncryptedSocket,
+        max_buffered_messages: usize,
+    ) -> Result<Self, Error> {
         let is_dead = Arc::new(AtomicBool::new(false));
         let inner = Arc::new(Mutex::new(inner_stream));
-        let (message_sender, message_receiver) =
-            tokio::sync::mpsc::channel(MESSAGE_CHANNEL_BUFFER_SIZE);
+        let (message_sender, message_receiver) = tokio::sync::mpsc::channel(max_buffered_messages);
 
         let is_dead_c = is_dead.clone();
         let inner_c = inner.clone();
@@ -248,6 +264,7 @@ mod client_test {
     use super::ReliableStream;
 
     const ADDR: &'static str = "127.0.0.1:0";
+    const MAX_BUFFERED_MESSAGES: usize = 64;
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
     enum TestMessage {
@@ -314,12 +331,14 @@ mod client_test {
             other_stream,
             None,
             HandshakeType::Responder,
+            MAX_BUFFERED_MESSAGES,
         ));
 
         let handle = tokio::spawn(ReliableStream::from_stream(
             stream,
             None,
             HandshakeType::Initiator,
+            MAX_BUFFERED_MESSAGES,
         ));
 
         let pair = handle.await.unwrap().unwrap();
