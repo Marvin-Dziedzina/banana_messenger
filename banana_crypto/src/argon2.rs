@@ -5,6 +5,8 @@ use argon2::{
 };
 use serde::{Deserialize, Serialize};
 
+pub type Salt = String;
+
 /// Implementation of the Argon2 hashing algorithm.
 pub struct Argon2;
 
@@ -23,7 +25,7 @@ impl Argon2 {
     /// Hashes a password using the Argon2 algorithm
     ///
     /// **Do not use to get a cryptographic key. Use [`Self::hash_key_derivation`]**
-    fn hash(password: &[u8]) -> Result<Argon2Hash, password_hash::Error> {
+    pub fn hash(password: &[u8]) -> Result<Argon2Hash, password_hash::Error> {
         let salt = Argon2::generate_salt();
         let hash = Argon::default().hash_password(password, &salt)?;
 
@@ -34,7 +36,7 @@ impl Argon2 {
     }
 
     /// Verifies that a password matches the given Argon2 hash.
-    fn verify(hash: &Argon2Hash, password: &[u8]) -> Result<(), password_hash::Error> {
+    pub fn verify(hash: &Argon2Hash, password: &[u8]) -> Result<(), password_hash::Error> {
         let password_hash = PasswordHash::new(&hash.hash)?;
         Argon::default().verify_password(password, &password_hash)
     }
@@ -42,9 +44,11 @@ impl Argon2 {
     /// Hashes a password into a buffer of arbitrary size.
     ///
     /// **This function generates an output that can be used as cryptographic key**
-    fn hash_key_derivation(password: &[u8], out: &mut [u8]) -> Result<(), argon2::Error> {
+    pub fn hash_key_derivation(password: &[u8], out: &mut [u8]) -> Result<Salt, argon2::Error> {
         let salt = Argon2::generate_salt().to_string();
-        Argon::default().hash_password_into(password, salt.as_ref(), out)
+        Argon::default().hash_password_into(password, salt.as_ref(), out)?;
+
+        Ok(salt)
     }
 }
 
