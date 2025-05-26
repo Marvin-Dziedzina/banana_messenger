@@ -130,8 +130,8 @@ where
         Self::send_netwrk_message(&self.inner, NetworkMessage::Message(message)).await
     }
 
-    /// Receive the next available message.
-    pub async fn receive(&mut self) -> Option<M> {
+    /// Receive a available message. Returns [`None`] if no messages are available.
+    pub async fn try_receive(&mut self) -> Option<M> {
         if self.message_receiver.is_closed() {
             return None;
         };
@@ -154,8 +154,8 @@ where
         if !buf.is_empty() { Some(buf) } else { None }
     }
 
-    /// Wait for the next message to arrive. When there is a message in buffer it will immediately return.
-    pub async fn wait_until_receive(&mut self) -> Option<M> {
+    /// Receive the next message. Yield once a message is available.
+    pub async fn receive(&mut self) -> Option<M> {
         if self.message_receiver.is_closed() {
             return None;
         };
@@ -276,14 +276,11 @@ mod client_test {
 
         stream.send(TestMessage::Foo).await.unwrap();
 
-        assert_eq!(
-            other_stream.wait_until_receive().await.unwrap(),
-            TestMessage::Foo
-        );
+        assert_eq!(other_stream.receive().await.unwrap(), TestMessage::Foo);
 
         other_stream.send(TestMessage::Bar).await.unwrap();
 
-        assert_eq!(stream.wait_until_receive().await.unwrap(), TestMessage::Bar);
+        assert_eq!(stream.receive().await.unwrap(), TestMessage::Bar);
 
         assert_eq!(key.public, other_stream.remote_public_key().await);
         assert_eq!(other_key.public, stream.remote_public_key().await);

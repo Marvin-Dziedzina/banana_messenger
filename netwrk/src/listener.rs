@@ -306,7 +306,7 @@ mod test_listener {
 
         tokio::time::sleep(Duration::from_millis(1)).await;
 
-        let recv_msg = remote_stream.receive().await.unwrap();
+        let recv_msg = remote_stream.try_receive().await.unwrap();
         assert_eq!(TestMessage::Foo, recv_msg);
         assert_eq!(keypair.public, remote_stream.remote_public_key().await);
         assert_eq!(remote_keypair.public, stream.remote_public_key().await);
