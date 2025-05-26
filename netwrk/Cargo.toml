@@ -9,6 +9,13 @@ tokio = { workspace = true }
 log = { workspace = true }
 serde = { workspace = true }
 banana_crypto = { path = "../banana_crypto" }
+snow = "0.9.6"
+ron = "0.10.1"
+zeroize = "1.8.1"
+tokio-util = { version = "0.7.15", features = ["codec"] }
+tokio-serde = { version = "0.9.0", features = ["bincode"] }
+futures = "0.3.31"
+bytes = "1.10.1"
 
 [dev-dependencies]
 env_logger = "0.11.8"
