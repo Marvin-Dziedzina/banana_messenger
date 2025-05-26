@@ -202,4 +202,9 @@ where
 }
 
 #[cfg(test)]
-mod test_listener {}
+mod test_listener {
+    #[tokio::test]
+    async fn test_listener() {
+        todo!("Implement tests for listener");
+    }
+}
