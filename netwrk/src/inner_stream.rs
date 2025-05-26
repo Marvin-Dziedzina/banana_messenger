@@ -21,6 +21,7 @@ pub struct InnerStream {
 }
 
 impl InnerStream {
+    /// Create a new initiator [`InnerStream`] from a address. Will return a newly generated [`SerializableKeypair`] if `keypair` is [`None`] otherwise it will return the supplied [`SerializableKeypair`].
     pub async fn new_initiator<A: ToSocketAddrs>(
         addr: A,
         keypair: Option<SerializableKeypair>,
@@ -33,6 +34,7 @@ impl InnerStream {
         .await
     }
 
+    /// Create a new responder [`InnerStream`] from a address. Will return a newly generated [`SerializableKeypair`] if `keypair` is [`None`] otherwise it will return the supplied [`SerializableKeypair`].
     pub async fn new_responder<A: ToSocketAddrs>(
         addr: A,
         keypair: Option<SerializableKeypair>,
@@ -45,6 +47,7 @@ impl InnerStream {
         .await
     }
 
+    /// Create a [`InnerStream`] from a [`TcpStream`]. Will return a newly generated [`SerializableKeypair`] if `keypair` is [`None`] otherwise it will return the supplied [`SerializableKeypair`].
     pub async fn from_tcp_stream(
         tcp_stream: TcpStream,
         keypair: Option<SerializableKeypair>,
@@ -67,6 +70,7 @@ impl InnerStream {
             .map(|v| (v, SerializableKeypair::from(keypair)))
     }
 
+    /// Create [`InnerStream`] from a [`TcpStream`] and [`snow::HandshakeState`].
     pub async fn from_handshake(
         tcp_stream: TcpStream,
         handshake_state: snow::HandshakeState,
@@ -107,7 +111,7 @@ impl InnerStream {
     pub async fn read(&mut self) -> Result<Option<Vec<u8>>, Error> {
         let bytes = match self.sink.try_next().await? {
             Some(bytes) => bytes,
-            None => return Err(Error::NotAvailable),
+            None => return Ok(None),
         };
 
         self.transport_read(&bytes).await

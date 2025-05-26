@@ -38,6 +38,7 @@ impl<M> Stream<M>
 where
     M: Serialize + for<'a> Deserialize<'a> + Send + 'static,
 {
+    /// Create a new initiator stream. Will return a newly generated [`SerializableKeypair`] if `keypair` is [`None`] otherwise it will return the supplied [`SerializableKeypair`].
     pub async fn connect_initiator<A: ToSocketAddrs>(
         addr: A,
         keypair: Option<SerializableKeypair>,
@@ -45,6 +46,7 @@ where
         Self::connect_handshake(addr, keypair, HandshakeType::Initiator).await
     }
 
+    /// Create a new responder stream. Will return a newly generated [`SerializableKeypair`] if `keypair` is [`None`] otherwise it will return the supplied [`SerializableKeypair`].
     pub async fn connect_responder<A: ToSocketAddrs>(
         addr: A,
         keypair: Option<SerializableKeypair>,
@@ -52,6 +54,7 @@ where
         Self::connect_handshake(addr, keypair, HandshakeType::Responder).await
     }
 
+    /// Connect with a [`HandshakeType`]. Will return a newly generated [`SerializableKeypair`] if `keypair` is [`None`] otherwise it will return the supplied [`SerializableKeypair`].
     async fn connect_handshake<A: ToSocketAddrs>(
         addr: A,
         keypair: Option<SerializableKeypair>,
@@ -66,6 +69,7 @@ where
         Ok((netwrk_stream, keypair))
     }
 
+    /// Create a [`Stream`] from a [`TcpStream`] and [`HandshakeType`]. Will return a newly generated [`SerializableKeypair`] if `keypair` is [`None`] otherwise it will return the supplied [`SerializableKeypair`].
     pub async fn from_stream(
         tcp_stream: TcpStream,
         keypair: Option<SerializableKeypair>,
@@ -78,6 +82,7 @@ where
         Ok((netwrk_stream, keypair))
     }
 
+    /// Create a [`Stream`] from a [`InnerStream`].
     pub async fn from_inner_stream(inner_stream: InnerStream) -> Result<Self, Error> {
         let is_dead = Arc::new(AtomicBool::new(false));
         let inner = Arc::new(Mutex::new(inner_stream));

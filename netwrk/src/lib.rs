@@ -13,6 +13,7 @@ type FramedStream = Framed<TcpStream, LengthDelimitedCodec>;
 
 const NOISE_PARAMS: &str = "Noise_XX_25519_ChaChaPoly_BLAKE2s";
 
+const CONNECTION_ACCEPTION_TIMEOUT: Duration = Duration::from_millis(1);
 const MESSAGE_PROCESSING_INTERVALL: Duration = Duration::from_millis(5);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,7 +36,6 @@ pub enum Error {
     TokioJoinError(tokio::task::JoinError),
     EOF,
     Dead,
-    NotAvailable,
     AlreadyRunning,
 }
 
@@ -68,7 +68,6 @@ impl std::fmt::Display for Error {
             Self::TokioJoinError(e) => write!(f, "Tokio Join Error: {}", e),
             Self::EOF => write!(f, "EOF"),
             Self::Dead => write!(f, "Dead"),
-            Self::NotAvailable => write!(f, "Not avialable"),
             Self::AlreadyRunning => write!(f, "Already Running"),
         }?;
         write!(f, " }}")
