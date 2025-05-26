@@ -2,8 +2,8 @@
 members = ["banana_crypto", "banana_messenger_core", "banana_train", "netwrk"]
 
 [workspace.dependencies]
-tokio = { version = "1.45.0", features = ["full"] }
-rusqlite = { version = "0.35.0", features = ["bundled"] }
+tokio = { version = "1.45.1", features = ["full"] }
+rusqlite = { version = "0.36.0", features = ["bundled"] }
 rayon = "1.10.0"
 serde = { version = "1.0.219", features = ["derive"] }
 log = "0.4.27"
