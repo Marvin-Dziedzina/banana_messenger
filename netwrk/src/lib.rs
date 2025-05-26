@@ -14,7 +14,6 @@ type FramedStream = Framed<TcpStream, LengthDelimitedCodec>;
 const NOISE_PARAMS: &str = "Noise_XX_25519_ChaChaPoly_BLAKE2s";
 
 const CONNECTION_ACCEPTION_TIMEOUT: Duration = Duration::from_millis(1);
-const MESSAGE_PROCESSING_INTERVALL: Duration = Duration::from_millis(5);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(bound(deserialize = "M: for<'a> Deserialize<'a>"))]

@@ -12,7 +12,7 @@ use tokio::{
 };
 
 use crate::{
-    Error, MESSAGE_PROCESSING_INTERVALL, NetworkMessage, decode, encode,
+    Error, NetworkMessage, decode, encode,
     encrypted_socket::{EncryptedSocket, HandshakeType},
     serialisable_keypair::SerializableKeypair,
 };
@@ -223,8 +223,6 @@ where
                         return Ok(());
                     }
                 };
-
-                tokio::time::sleep(MESSAGE_PROCESSING_INTERVALL).await;
             }
         }
     }
