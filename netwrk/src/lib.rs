@@ -59,7 +59,7 @@ impl From<tokio::task::JoinError> for Error {
 
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Netwrk Error: {{ ")?;
+        write!(f, "Network Error: {{ ")?;
         match self {
             Self::Io(e) => write!(f, "IO Error: {}", e),
             Self::Snow(e) => write!(f, "Snow Error: {}", e),

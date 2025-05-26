@@ -1,7 +1,5 @@
-use std::time::Duration;
-
 use bytes::Bytes;
-use futures::{SinkExt, StreamExt, TryStreamExt};
+use futures::{SinkExt, StreamExt, TryStreamExt, future::poll_fn};
 use log::info;
 use snow::TransportState;
 use tokio::net::{TcpStream, ToSocketAddrs};
@@ -117,11 +115,19 @@ impl EncryptedSocket {
 
     /// Try to read from stream. Returns immediately when no message is available.
     pub async fn try_read(&mut self) -> Result<Option<Vec<u8>>, Error> {
-        let bytes = match tokio::time::timeout(Duration::from_millis(0), self.sink.next()).await {
-            Ok(Some(Ok(bytes))) => bytes,
-            Ok(Some(Err(e))) => return Err(Error::Io(e)),
-            Ok(None) => return Err(Error::Dead),
-            Err(_) => return Ok(None),
+        use std::task::Poll;
+
+        let bytes = match poll_fn(|cx| match self.sink.poll_next_unpin(cx) {
+            Poll::Ready(Some(Ok(bytes))) => Poll::Ready(Ok(Some(bytes))),
+            Poll::Ready(Some(Err(e))) => Poll::Ready(Err(Error::Io(e))),
+            Poll::Ready(None) => Poll::Ready(Err(Error::Dead)),
+            Poll::Pending => Poll::Ready(Ok(None)),
+        })
+        .await
+        {
+            Ok(Some(bytes)) => bytes,
+            Ok(None) => return Ok(None),
+            Err(e) => return Err(e),
         };
 
         self.transport_read(&bytes).await
