@@ -4,10 +4,10 @@ use serde::{Deserialize, Serialize};
 use tokio::net::TcpStream;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
-pub mod inner_stream;
+pub mod encrypted_socket;
 pub mod listener;
+pub mod reliable_stream;
 pub mod serialisable_keypair;
-pub mod stream;
 
 type FramedStream = Framed<TcpStream, LengthDelimitedCodec>;
 
@@ -18,7 +18,7 @@ const MESSAGE_PROCESSING_INTERVALL: Duration = Duration::from_millis(5);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(bound(deserialize = "M: for<'a> Deserialize<'a>"))]
-pub enum NetwrkMessage<M>
+pub enum NetworkMessage<M>
 where
     M: Serialize + for<'a> Deserialize<'a>,
 {

@@ -17,9 +17,9 @@ use tokio::{
 
 use crate::{
     CONNECTION_ACCEPTION_TIMEOUT, Error,
-    inner_stream::{HandshakeType, InnerStream},
+    encrypted_socket::{EncryptedSocket, HandshakeType},
+    reliable_stream::ReliableStream,
     serialisable_keypair::SerializableKeypair,
-    stream::Stream,
 };
 
 #[derive(Debug)]
@@ -32,7 +32,7 @@ where
     listener: Arc<Mutex<TcpListener>>,
 
     listener_task: Option<JoinHandle<Result<(), Error>>>,
-    stream_buf: Arc<Mutex<VecDeque<(Stream<M>, SocketAddr)>>>,
+    stream_buf: Arc<Mutex<VecDeque<(ReliableStream<M>, SocketAddr)>>>,
     new_connection_notify: Arc<Notify>,
 
     keypair: Arc<SerializableKeypair>,
@@ -49,7 +49,7 @@ where
     ) -> Result<(Self, SerializableKeypair), Error> {
         let keypair = match keypair {
             Some(keypair) => keypair,
-            None => InnerStream::generate_keypair(),
+            None => EncryptedSocket::generate_keypair(),
         };
 
         Ok((
@@ -75,7 +75,7 @@ where
     /// # Errors
     ///
     /// Will result in [`Error::AlreadyRunning`] if the accept listener is already running.
-    pub async fn accept(&self) -> Result<(Stream<M>, SocketAddr), Error> {
+    pub async fn accept(&self) -> Result<(ReliableStream<M>, SocketAddr), Error> {
         if self.listener_task.is_some() {
             return Err(Error::AlreadyRunning);
         };
@@ -88,7 +88,7 @@ where
     /// # Errors
     ///
     /// Will result in [`Error::AlreadyRunning`] if the accept listener is already running.
-    pub async fn try_accept(&self) -> Result<Option<(Stream<M>, SocketAddr)>, Error> {
+    pub async fn try_accept(&self) -> Result<Option<(ReliableStream<M>, SocketAddr)>, Error> {
         use futures::future::poll_fn;
         use std::task::Poll;
 
@@ -106,7 +106,7 @@ where
 
         let conn = match raw_conn {
             Some((tcp_stream, addr)) => (
-                Stream::from_stream(
+                ReliableStream::from_stream(
                     tcp_stream,
                     Some(self.keypair.as_ref().to_owned()),
                     HandshakeType::Responder,
@@ -126,7 +126,9 @@ where
     /// # Errors
     ///
     /// Will result in a [`Error::NotRunning`] if the listener task is not running.
-    pub async fn get_connection(&mut self) -> Result<Option<(Stream<M>, SocketAddr)>, Error> {
+    pub async fn get_connection(
+        &mut self,
+    ) -> Result<Option<(ReliableStream<M>, SocketAddr)>, Error> {
         if self.listener_task.is_none() {
             return Err(Error::NotRunning);
         };
@@ -139,7 +141,9 @@ where
     /// # Errors
     ///
     /// Will result in a [`Error::NotRunning`] if the listener task is not running.
-    pub async fn wait_until_connect(&mut self) -> Result<Option<(Stream<M>, SocketAddr)>, Error> {
+    pub async fn wait_until_connect(
+        &mut self,
+    ) -> Result<Option<(ReliableStream<M>, SocketAddr)>, Error> {
         loop {
             if self.listener_task.is_none() {
                 return Err(Error::NotRunning);
@@ -184,7 +188,9 @@ where
     }
 
     /// Stop the listener.
-    pub async fn stop_listening(&mut self) -> Result<VecDeque<(Stream<M>, SocketAddr)>, Error> {
+    pub async fn stop_listening(
+        &mut self,
+    ) -> Result<VecDeque<(ReliableStream<M>, SocketAddr)>, Error> {
         if let Some(listener_task) = std::mem::take(&mut self.listener_task) {
             self.is_dead.store(true, Ordering::Release);
 
@@ -199,7 +205,7 @@ where
     async fn listener_task(
         is_dead: Arc<AtomicBool>,
         listener: Arc<Mutex<TcpListener>>,
-        stream_buf: Arc<Mutex<VecDeque<(Stream<M>, SocketAddr)>>>,
+        stream_buf: Arc<Mutex<VecDeque<(ReliableStream<M>, SocketAddr)>>>,
         new_connection_notify: Arc<Notify>,
         keypair: Arc<SerializableKeypair>,
     ) -> Result<(), Error> {
@@ -229,7 +235,7 @@ where
     }
 
     /// Close the listener and return all established connections that where not collected. The [`VecDeque`] will be empty if the listener task was never started.
-    pub async fn close(mut self) -> Result<VecDeque<(Stream<M>, SocketAddr)>, Error> {
+    pub async fn close(mut self) -> Result<VecDeque<(ReliableStream<M>, SocketAddr)>, Error> {
         let res = self.stop_listening().await;
 
         self.is_dead.store(false, Ordering::Release);
@@ -245,9 +251,9 @@ where
     async fn accept_incoming(
         listener: &Arc<Mutex<TcpListener>>,
         keypair: &Arc<SerializableKeypair>,
-    ) -> Result<(Stream<M>, SocketAddr), Error> {
+    ) -> Result<(ReliableStream<M>, SocketAddr), Error> {
         let (tcp_stream, addr) = listener.lock().await.accept().await?;
-        let (stream, _) = Stream::from_stream(
+        let (stream, _) = ReliableStream::from_stream(
             tcp_stream,
             Some(keypair.as_ref().to_owned()),
             HandshakeType::Responder,
@@ -265,7 +271,7 @@ mod test_listener {
     use serde::{Deserialize, Serialize};
     use tokio::{net::ToSocketAddrs, task::JoinHandle};
 
-    use crate::{listener::Listener, stream::Stream};
+    use crate::{listener::Listener, reliable_stream::ReliableStream};
 
     const ADDR: &str = "127.0.0.1:0";
 
@@ -306,12 +312,12 @@ mod test_listener {
     ) -> JoinHandle<
         Result<
             (
-                Stream<TestMessage>,
+                ReliableStream<TestMessage>,
                 crate::serialisable_keypair::SerializableKeypair,
             ),
             crate::Error,
         >,
     > {
-        tokio::spawn(Stream::connect_initiator(addr, None))
+        tokio::spawn(ReliableStream::connect_initiator(addr, None))
     }
 }

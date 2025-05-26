@@ -1,40 +1,38 @@
-use std::{
-    collections::VecDeque,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
 };
 
-use log::{debug, warn};
+use log::warn;
 use serde::{Deserialize, Serialize};
 use tokio::{
     net::{TcpStream, ToSocketAddrs},
-    sync::{Mutex, Notify},
+    sync::Mutex,
     task::JoinHandle,
 };
 
 use crate::{
-    Error, MESSAGE_PROCESSING_INTERVALL, NetwrkMessage, decode, encode,
-    inner_stream::{HandshakeType, InnerStream},
+    Error, MESSAGE_PROCESSING_INTERVALL, NetworkMessage, decode, encode,
+    encrypted_socket::{EncryptedSocket, HandshakeType},
     serialisable_keypair::SerializableKeypair,
 };
 
+const MESSAGE_CHANNEL_BUFFER_SIZE: usize = 64;
+
 #[derive(Debug)]
-pub struct Stream<M>
+pub struct ReliableStream<M>
 where
     M: Serialize + for<'a> Deserialize<'a> + Send + 'static,
 {
     is_dead: Arc<AtomicBool>,
 
-    inner: Arc<Mutex<InnerStream>>,
-    message_buf: Arc<Mutex<VecDeque<M>>>,
-    new_msg_notify: Arc<Notify>,
+    inner: Arc<Mutex<EncryptedSocket>>,
+    message_receiver: tokio::sync::mpsc::Receiver<M>,
 
     handle_incoming_task: JoinHandle<Result<(), Error>>,
 }
 
-impl<M> Stream<M>
+impl<M> ReliableStream<M>
 where
     M: Serialize + for<'a> Deserialize<'a> + Send + 'static,
 {
@@ -58,11 +56,11 @@ where
     async fn connect_handshake<A: ToSocketAddrs>(
         addr: A,
         keypair: Option<SerializableKeypair>,
-        handshake_type: crate::inner_stream::HandshakeType,
+        handshake_type: crate::encrypted_socket::HandshakeType,
     ) -> Result<(Self, SerializableKeypair), Error> {
         let (inner, keypair) = match handshake_type {
-            HandshakeType::Initiator => InnerStream::new_initiator(addr, keypair).await,
-            HandshakeType::Responder => InnerStream::new_responder(addr, keypair).await,
+            HandshakeType::Initiator => EncryptedSocket::new_initiator(addr, keypair).await,
+            HandshakeType::Responder => EncryptedSocket::new_responder(addr, keypair).await,
         }?;
         let netwrk_stream = Self::from_inner_stream(inner).await?;
 
@@ -73,39 +71,35 @@ where
     pub async fn from_stream(
         tcp_stream: TcpStream,
         keypair: Option<SerializableKeypair>,
-        handshake_type: crate::inner_stream::HandshakeType,
+        handshake_type: crate::encrypted_socket::HandshakeType,
     ) -> Result<(Self, SerializableKeypair), Error> {
         let (inner, keypair) =
-            InnerStream::from_tcp_stream(tcp_stream, keypair, handshake_type).await?;
+            EncryptedSocket::from_tcp_stream(tcp_stream, keypair, handshake_type).await?;
         let netwrk_stream = Self::from_inner_stream(inner).await?;
 
         Ok((netwrk_stream, keypair))
     }
 
     /// Create a [`Stream`] from a [`InnerStream`].
-    pub async fn from_inner_stream(inner_stream: InnerStream) -> Result<Self, Error> {
+    pub async fn from_inner_stream(inner_stream: EncryptedSocket) -> Result<Self, Error> {
         let is_dead = Arc::new(AtomicBool::new(false));
         let inner = Arc::new(Mutex::new(inner_stream));
-        let message_buf = Arc::new(Mutex::new(VecDeque::with_capacity(u8::MAX as usize)));
-        let new_msg_notify = Arc::new(Notify::new());
+        let (message_sender, message_receiver) =
+            tokio::sync::mpsc::channel(MESSAGE_CHANNEL_BUFFER_SIZE);
 
         let is_dead_c = is_dead.clone();
         let inner_c = inner.clone();
-        let message_buf_c = message_buf.clone();
-        let new_msg_notify_c = new_msg_notify.clone();
         let handle_incoming_task = tokio::spawn(Self::handle_incoming_messages(
             is_dead_c,
             inner_c,
-            message_buf_c,
-            new_msg_notify_c,
+            message_sender,
         ));
 
         Ok(Self {
             is_dead,
 
             inner,
-            message_buf,
-            new_msg_notify,
+            message_receiver,
 
             handle_incoming_task,
         })
@@ -117,57 +111,61 @@ where
             return Err(Error::Dead);
         };
 
-        Self::send_netwrk_message(&self.inner, NetwrkMessage::Message(message)).await
+        Self::send_netwrk_message(&self.inner, NetworkMessage::Message(message)).await
     }
 
     /// Receive the next available message.
     pub async fn receive(&mut self) -> Option<M> {
-        self.message_buf.lock().await.pop_front()
+        if self.message_receiver.is_closed() {
+            return None;
+        };
+
+        self.message_receiver.try_recv().ok()
     }
 
     /// Receive all currently available messages.
-    pub async fn batch_receive(&mut self) -> Option<Vec<M>> {
-        let msgs: Vec<M> = std::mem::take(&mut *self.message_buf.lock().await).into();
+    pub fn batch_receive(&mut self) -> Option<Vec<M>> {
+        if self.message_receiver.is_closed() {
+            return None;
+        };
 
-        if !msgs.is_empty() { Some(msgs) } else { None }
+        let mut buf = Vec::new();
+
+        while let Ok(msg) = self.message_receiver.try_recv() {
+            buf.push(msg);
+        }
+
+        if !buf.is_empty() { Some(buf) } else { None }
     }
 
     /// Wait for the next message to arrive. When there is a message in buffer it will immediately return.
-    pub async fn wait_until_receive(&mut self) -> M {
-        loop {
-            if let Some(msg) = self.receive().await {
-                return msg;
-            };
+    pub async fn wait_until_receive(&mut self) -> Option<M> {
+        if self.message_receiver.is_closed() {
+            return None;
+        };
 
-            // Wait for a notification or timeout.
-            tokio::select! {
-                _ = self.new_msg_notify.notified() => {
-                    debug!("Wait until recive notified");
-                }
-            _ = tokio::time::sleep(MESSAGE_PROCESSING_INTERVALL *10) => {
-                debug!("Wait until recive timeout. Checking manually");
-            }
-            };
-        }
+        self.message_receiver.recv().await
     }
 
     /// Close the connection. After that call you can not send and receive any messages anymore.
     ///
     /// The current messages in buffer will be returned.
-    pub async fn close(self) -> Result<VecDeque<M>, Error> {
+    pub async fn close(mut self) -> Result<Option<Vec<M>>, Error> {
         if !self.is_dead() {
-            Self::send_netwrk_message(&self.inner, NetwrkMessage::<M>::Disconnect).await?;
+            Self::send_netwrk_message(&self.inner, NetworkMessage::<M>::Disconnect).await?;
             self.is_dead.store(true, Ordering::Release);
         };
 
+        let msgs = self.batch_receive();
+        self.message_receiver.close();
         self.handle_incoming_task.await??;
 
-        Ok(std::mem::take(&mut *self.message_buf.lock().await))
+        Ok(msgs)
     }
 
     async fn send_netwrk_message(
-        inner: &Arc<Mutex<InnerStream>>,
-        netwrk_message: NetwrkMessage<M>,
+        inner: &Arc<Mutex<EncryptedSocket>>,
+        netwrk_message: NetworkMessage<M>,
     ) -> Result<(), Error> {
         inner.lock().await.send(&encode(netwrk_message)?).await
     }
@@ -179,44 +177,40 @@ where
 
     async fn handle_incoming_messages(
         is_dead: Arc<AtomicBool>,
-        inner_stream: Arc<Mutex<InnerStream>>,
-        message_buf: Arc<Mutex<VecDeque<M>>>,
-        new_msg_notify: Arc<Notify>,
+        inner_stream: Arc<Mutex<EncryptedSocket>>,
+        message_sender: tokio::sync::mpsc::Sender<M>,
     ) -> Result<(), Error> {
-        while let Ok(res) = inner_stream.lock().await.try_read().await {
+        loop {
             if is_dead.load(Ordering::Relaxed) {
                 return Ok(());
             };
 
-            let bytes = match res {
-                Some(bytes) => bytes,
-                None => continue,
-            };
+            while let Ok(Some(bytes)) = inner_stream.lock().await.try_read().await {
+                let netwrk_message: NetworkMessage<M> = match decode(&bytes) {
+                    Ok(netwrk_message) => netwrk_message,
+                    Err(e) => {
+                        warn!("Failed to decode netwrk message: {}", e);
+                        continue;
+                    }
+                };
 
-            let netwrk_message: NetwrkMessage<M> = match decode(&bytes) {
-                Ok(netwrk_message) => netwrk_message,
-                Err(e) => {
-                    warn!("Failed to decode netwrk message: {}", e);
-                    continue;
-                }
-            };
+                match netwrk_message {
+                    NetworkMessage::Message(msg) => {
+                        if let Err(e) = message_sender.send(msg).await {
+                            warn!("Failed to send message to channel: {}", e);
+                            continue;
+                        };
+                    }
 
-            match netwrk_message {
-                NetwrkMessage::Message(msg) => {
-                    message_buf.lock().await.push_back(msg);
-                    new_msg_notify.notify_waiters();
-                }
+                    NetworkMessage::Disconnect => {
+                        is_dead.store(true, Ordering::Release);
+                        return Ok(());
+                    }
+                };
 
-                NetwrkMessage::Disconnect => {
-                    is_dead.store(true, Ordering::Release);
-                    return Ok(());
-                }
-            };
-
-            tokio::time::sleep(MESSAGE_PROCESSING_INTERVALL).await;
+                tokio::time::sleep(MESSAGE_PROCESSING_INTERVALL).await;
+            }
         }
-
-        Ok(())
     }
 
     /// Is [`NetwrkStream`] dead.
@@ -228,7 +222,7 @@ where
     ///
     /// This [`SerializableKeypair`] can be stored.
     pub fn generate_keypair() -> SerializableKeypair {
-        InnerStream::generate_keypair()
+        EncryptedSocket::generate_keypair()
     }
 
     /// Get the local address.
@@ -249,9 +243,9 @@ mod client_test {
     use serde::{Deserialize, Serialize};
     use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
 
-    use crate::{inner_stream::HandshakeType, serialisable_keypair::SerializableKeypair};
+    use crate::{encrypted_socket::HandshakeType, serialisable_keypair::SerializableKeypair};
 
-    use super::Stream;
+    use super::ReliableStream;
 
     const ADDR: &'static str = "127.0.0.1:0";
 
@@ -262,16 +256,19 @@ mod client_test {
     }
 
     #[tokio::test]
-    async fn test_netwrk_stream() {
+    async fn test_reliable_stream() {
         let ((mut stream, key), (mut other_stream, other_key)) = get_netwrk_streams().await;
 
         stream.send(TestMessage::Foo).await.unwrap();
 
-        assert_eq!(other_stream.wait_until_receive().await, TestMessage::Foo);
+        assert_eq!(
+            other_stream.wait_until_receive().await.unwrap(),
+            TestMessage::Foo
+        );
 
         other_stream.send(TestMessage::Bar).await.unwrap();
 
-        assert_eq!(stream.wait_until_receive().await, TestMessage::Bar);
+        assert_eq!(stream.wait_until_receive().await.unwrap(), TestMessage::Bar);
 
         assert_eq!(key.public, other_stream.remote_public_key().await);
         assert_eq!(other_key.public, stream.remote_public_key().await);
@@ -288,7 +285,7 @@ mod client_test {
 
     #[tokio::test]
     async fn generate_keypair() {
-        let _ = Stream::<TestMessage>::generate_keypair();
+        let _ = ReliableStream::<TestMessage>::generate_keypair();
     }
 
     #[tokio::test]
@@ -308,18 +305,22 @@ mod client_test {
     }
 
     async fn get_netwrk_streams() -> (
-        (Stream<TestMessage>, SerializableKeypair),
-        (Stream<TestMessage>, SerializableKeypair),
+        (ReliableStream<TestMessage>, SerializableKeypair),
+        (ReliableStream<TestMessage>, SerializableKeypair),
     ) {
         let (stream, other_stream) = get_streams(ADDR).await;
 
-        let other_handle = tokio::spawn(Stream::from_stream(
+        let other_handle = tokio::spawn(ReliableStream::from_stream(
             other_stream,
             None,
             HandshakeType::Responder,
         ));
 
-        let handle = tokio::spawn(Stream::from_stream(stream, None, HandshakeType::Initiator));
+        let handle = tokio::spawn(ReliableStream::from_stream(
+            stream,
+            None,
+            HandshakeType::Initiator,
+        ));
 
         let pair = handle.await.unwrap().unwrap();
         let other_pair = other_handle.await.unwrap().unwrap();

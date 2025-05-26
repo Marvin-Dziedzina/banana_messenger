@@ -10,7 +10,7 @@ use tokio_util::codec::{Framed, LengthDelimitedCodec};
 use crate::{Error, FramedStream, NOISE_PARAMS, serialisable_keypair::SerializableKeypair};
 
 #[derive(Debug)]
-pub struct InnerStream {
+pub struct EncryptedSocket {
     /// Sender and receiver
     sink: FramedStream,
     /// En- and decryption
@@ -20,7 +20,7 @@ pub struct InnerStream {
     pub buf: Box<[u8; u16::MAX as usize]>,
 }
 
-impl InnerStream {
+impl EncryptedSocket {
     /// Create a new initiator [`InnerStream`] from a address. Will return a newly generated [`SerializableKeypair`] if `keypair` is [`None`] otherwise it will return the supplied [`SerializableKeypair`].
     pub async fn new_initiator<A: ToSocketAddrs>(
         addr: A,
@@ -102,8 +102,6 @@ impl InnerStream {
     }
 
     /// Reads a message from stream.
-    ///
-    /// Returns the size of bytes read. Returns a [`Error::BufferTooSmall`] when the supplied buf is not sufficient.
     ///
     /// # Errors
     ///
@@ -243,7 +241,7 @@ mod test_inner_stream {
     use serde::{Deserialize, Serialize};
     use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
 
-    use crate::inner_stream::InnerStream;
+    use crate::encrypted_socket::EncryptedSocket;
 
     use super::HandshakeType;
 
@@ -277,8 +275,8 @@ mod test_inner_stream {
     async fn test_sink() {
         let (stream, other_stream) = establish_connection(ADDR).await;
         let (mut stream, mut other_stream) = (
-            InnerStream::get_framed_stream(stream),
-            InnerStream::get_framed_stream(other_stream),
+            EncryptedSocket::get_framed_stream(stream),
+            EncryptedSocket::get_framed_stream(other_stream),
         );
 
         let msg = "Test 1".as_bytes();
@@ -307,7 +305,7 @@ mod test_inner_stream {
 
     #[tokio::test]
     async fn test_generate_keypair() {
-        let _ = InnerStream::generate_keypair();
+        let _ = EncryptedSocket::generate_keypair();
     }
 
     #[tokio::test]
@@ -318,8 +316,8 @@ mod test_inner_stream {
     #[tokio::test]
     async fn test_get_framed_stream() {
         let (stream, other_stream) = establish_connection(ADDR).await;
-        let _ = InnerStream::get_framed_stream(stream);
-        let _ = InnerStream::get_framed_stream(other_stream);
+        let _ = EncryptedSocket::get_framed_stream(stream);
+        let _ = EncryptedSocket::get_framed_stream(other_stream);
     }
 
     #[tokio::test]
@@ -327,15 +325,15 @@ mod test_inner_stream {
         establish_connection(ADDR).await;
     }
 
-    async fn get_inner_streams() -> (InnerStream, InnerStream) {
+    async fn get_inner_streams() -> (EncryptedSocket, EncryptedSocket) {
         let (stream, other_stream) = establish_connection(ADDR).await;
 
-        let other = tokio::spawn(InnerStream::from_tcp_stream(
+        let other = tokio::spawn(EncryptedSocket::from_tcp_stream(
             other_stream,
             None,
             HandshakeType::Responder,
         ));
-        let handle = tokio::spawn(InnerStream::from_tcp_stream(
+        let handle = tokio::spawn(EncryptedSocket::from_tcp_stream(
             stream,
             None,
             HandshakeType::Initiator,
