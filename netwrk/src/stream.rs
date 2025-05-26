@@ -61,8 +61,8 @@ where
         handshake_type: crate::inner_stream::HandshakeType,
     ) -> Result<(Self, SerializableKeypair), Error> {
         let (inner, keypair) = match handshake_type {
-            HandshakeType::Responder => InnerStream::new_responder(addr, keypair).await,
             HandshakeType::Initiator => InnerStream::new_initiator(addr, keypair).await,
+            HandshakeType::Responder => InnerStream::new_responder(addr, keypair).await,
         }?;
         let netwrk_stream = Self::from_inner_stream(inner).await?;
 
@@ -173,7 +173,7 @@ where
     }
 
     /// Get the remote public key.
-    pub async fn get_remote_public_key(&self) -> Vec<u8> {
+    pub async fn remote_public_key(&self) -> Vec<u8> {
         self.inner.lock().await.get_remote_public_key()
     }
 
@@ -249,7 +249,7 @@ mod client_test {
     use serde::{Deserialize, Serialize};
     use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
 
-    use crate::inner_stream::HandshakeType;
+    use crate::{inner_stream::HandshakeType, serialisable_keypair::SerializableKeypair};
 
     use super::Stream;
 
@@ -263,7 +263,7 @@ mod client_test {
 
     #[tokio::test]
     async fn test_netwrk_stream() {
-        let (mut stream, mut other_stream) = get_netwrk_streams().await;
+        let ((mut stream, key), (mut other_stream, other_key)) = get_netwrk_streams().await;
 
         stream.send(TestMessage::Foo).await.unwrap();
 
@@ -272,6 +272,9 @@ mod client_test {
         other_stream.send(TestMessage::Bar).await.unwrap();
 
         assert_eq!(stream.wait_until_receive().await, TestMessage::Bar);
+
+        assert_eq!(key.public, other_stream.remote_public_key().await);
+        assert_eq!(other_key.public, stream.remote_public_key().await);
 
         assert!(!stream.is_dead());
         assert!(!other_stream.is_dead());
@@ -290,7 +293,7 @@ mod client_test {
 
     #[tokio::test]
     async fn test_local_address() {
-        let (stream, other_stream) = get_netwrk_streams().await;
+        let ((stream, _), (other_stream, _)) = get_netwrk_streams().await;
 
         let _ = stream.local_address().await.unwrap();
         let _ = other_stream.local_address().await.unwrap();
@@ -298,13 +301,16 @@ mod client_test {
 
     #[tokio::test]
     async fn test_remote_address() {
-        let (stream, other_stream) = get_netwrk_streams().await;
+        let ((stream, _), (other_stream, _)) = get_netwrk_streams().await;
 
         let _ = stream.remote_address().await.unwrap();
         let _ = other_stream.remote_address().await.unwrap();
     }
 
-    async fn get_netwrk_streams() -> (Stream<TestMessage>, Stream<TestMessage>) {
+    async fn get_netwrk_streams() -> (
+        (Stream<TestMessage>, SerializableKeypair),
+        (Stream<TestMessage>, SerializableKeypair),
+    ) {
         let (stream, other_stream) = get_streams(ADDR).await;
 
         let other_handle = tokio::spawn(Stream::from_stream(
@@ -315,10 +321,10 @@ mod client_test {
 
         let handle = tokio::spawn(Stream::from_stream(stream, None, HandshakeType::Initiator));
 
-        let (stream, _) = handle.await.unwrap().unwrap();
-        let other_stream = other_handle.await.unwrap().map(|(v, _)| v).unwrap();
+        let pair = handle.await.unwrap().unwrap();
+        let other_pair = other_handle.await.unwrap().unwrap();
 
-        (stream, other_stream)
+        (pair, other_pair)
     }
 
     async fn get_streams<A: ToSocketAddrs>(addr: A) -> (TcpStream, TcpStream) {

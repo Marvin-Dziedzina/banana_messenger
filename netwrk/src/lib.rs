@@ -37,6 +37,7 @@ pub enum Error {
     EOF,
     Dead,
     AlreadyRunning,
+    NotRunning,
 }
 
 impl From<std::io::Error> for Error {
@@ -69,6 +70,7 @@ impl std::fmt::Display for Error {
             Self::EOF => write!(f, "EOF"),
             Self::Dead => write!(f, "Dead"),
             Self::AlreadyRunning => write!(f, "Already Running"),
+            Self::NotRunning => write!(f, "Not Running"),
         }?;
         write!(f, " }}")
     }

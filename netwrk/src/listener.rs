@@ -7,7 +7,7 @@ use std::{
     },
 };
 
-use log::warn;
+use log::{debug, warn};
 use serde::{Deserialize, Serialize};
 use tokio::{
     net::{TcpListener, ToSocketAddrs},
@@ -121,7 +121,49 @@ where
         Ok(Some(conn))
     }
 
-    /// Start listening for incoming connections.
+    /// Get a established connection if available. Only usable if the listener is running.
+    ///
+    /// # Errors
+    ///
+    /// Will result in a [`Error::NotRunning`] if the listener task is not running.
+    pub async fn get_connection(&mut self) -> Result<Option<(Stream<M>, SocketAddr)>, Error> {
+        if self.listener_task.is_none() {
+            return Err(Error::NotRunning);
+        };
+
+        Ok(self.stream_buf.lock().await.pop_front())
+    }
+
+    /// Wait until a connection is established. If no is available wait for one. Only usable id the listener is running.
+    ///
+    /// # Errors
+    ///
+    /// Will result in a [`Error::NotRunning`] if the listener task is not running.
+    pub async fn wait_until_connect(&mut self) -> Result<Option<(Stream<M>, SocketAddr)>, Error> {
+        loop {
+            if self.listener_task.is_none() {
+                return Err(Error::NotRunning);
+            };
+
+            {
+                let mut stream_buf_lock = self.stream_buf.lock().await;
+                if !stream_buf_lock.is_empty() {
+                    return Ok(stream_buf_lock.pop_front());
+                };
+            }
+
+            tokio::select! {
+                _ = self.new_connection_notify.notified() => {
+                    debug!("Wait until connect notified");
+                }
+                _ = tokio::time::sleep(CONNECTION_ACCEPTION_TIMEOUT) => {
+                    debug!("Wait until connect timeout. Manually checking");
+                }
+            };
+        }
+    }
+
+    /// Start the listener that listens for incoming connections.
     ///
     /// # Errors
     ///
@@ -139,6 +181,19 @@ where
         } else {
             Err(Error::AlreadyRunning)
         }
+    }
+
+    /// Stop the listener.
+    pub async fn stop_listening(&mut self) -> Result<VecDeque<(Stream<M>, SocketAddr)>, Error> {
+        if let Some(listener_task) = std::mem::take(&mut self.listener_task) {
+            self.is_dead.store(true, Ordering::Release);
+
+            listener_task.await??;
+
+            self.is_dead.store(false, Ordering::Release);
+        };
+
+        Ok(std::mem::take(&mut *self.stream_buf.lock().await))
     }
 
     async fn listener_task(
@@ -173,16 +228,18 @@ where
         }
     }
 
-    pub async fn close(self) -> Result<(), Error> {
-        if !self.is_dead.load(Ordering::Acquire) {
-            self.is_dead.store(true, Ordering::Release);
-        };
+    /// Close the listener and return all established connections that where not collected. The [`VecDeque`] will be empty if the listener task was never started.
+    pub async fn close(mut self) -> Result<VecDeque<(Stream<M>, SocketAddr)>, Error> {
+        let res = self.stop_listening().await;
 
-        if let Some(listener_task) = self.listener_task {
-            listener_task.await??;
-        };
+        self.is_dead.store(false, Ordering::Release);
 
-        Ok(())
+        res
+    }
+
+    /// Get the local address.
+    pub async fn local_address(&self) -> Result<SocketAddr, Error> {
+        self.listener.lock().await.local_addr().map_err(Error::Io)
     }
 
     async fn accept_incoming(
@@ -203,8 +260,58 @@ where
 
 #[cfg(test)]
 mod test_listener {
+    use std::time::Duration;
+
+    use serde::{Deserialize, Serialize};
+    use tokio::{net::ToSocketAddrs, task::JoinHandle};
+
+    use crate::{listener::Listener, stream::Stream};
+
+    const ADDR: &str = "127.0.0.1:0";
+
+    #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+    enum TestMessage {
+        Foo,
+        Bar,
+    }
+
     #[tokio::test]
     async fn test_listener() {
-        todo!("Implement tests for listener");
+        let (listener, keypair) = Listener::<TestMessage>::bind(ADDR, None).await.unwrap();
+        let local_addr = listener.local_address().await.unwrap();
+
+        let initiator_handle = connect_stream_to_listener(local_addr).await;
+
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let (mut remote_stream, remote_keypair) = initiator_handle.await.unwrap().unwrap();
+
+        stream.send(TestMessage::Foo).await.unwrap();
+
+        tokio::time::sleep(Duration::from_millis(1)).await;
+
+        let recv_msg = remote_stream.receive().await.unwrap();
+        assert_eq!(TestMessage::Foo, recv_msg);
+        assert_eq!(keypair.public, remote_stream.remote_public_key().await);
+        assert_eq!(remote_keypair.public, stream.remote_public_key().await);
+
+        listener.close().await.unwrap();
+
+        let other_handle = connect_stream_to_listener(local_addr).await;
+
+        assert!(other_handle.await.unwrap().is_err());
+    }
+
+    async fn connect_stream_to_listener<A: ToSocketAddrs + Send + 'static>(
+        addr: A,
+    ) -> JoinHandle<
+        Result<
+            (
+                Stream<TestMessage>,
+                crate::serialisable_keypair::SerializableKeypair,
+            ),
+            crate::Error,
+        >,
+    > {
+        tokio::spawn(Stream::connect_initiator(addr, None))
     }
 }
