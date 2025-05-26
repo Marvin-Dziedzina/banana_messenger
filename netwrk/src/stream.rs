@@ -20,6 +20,7 @@ use crate::{
     serialisable_keypair::SerializableKeypair,
 };
 
+#[derive(Debug)]
 pub struct Stream<M>
 where
     M: Serialize + for<'a> Deserialize<'a> + Send + 'static,

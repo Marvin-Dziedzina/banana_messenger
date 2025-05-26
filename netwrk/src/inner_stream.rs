@@ -9,6 +9,7 @@ use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
 use crate::{Error, FramedStream, NOISE_PARAMS, serialisable_keypair::SerializableKeypair};
 
+#[derive(Debug)]
 pub struct InnerStream {
     /// Sender and receiver
     sink: FramedStream,
