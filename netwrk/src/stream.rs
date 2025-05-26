@@ -20,7 +20,7 @@ use crate::{
     serialisable_keypair::SerializableKeypair,
 };
 
-pub struct NetwrkStream<M>
+pub struct Stream<M>
 where
     M: Serialize + for<'a> Deserialize<'a> + Send + 'static,
 {
@@ -33,7 +33,7 @@ where
     handle_incoming_task: JoinHandle<Result<(), Error>>,
 }
 
-impl<M> NetwrkStream<M>
+impl<M> Stream<M>
 where
     M: Serialize + for<'a> Deserialize<'a> + Send + 'static,
 {
@@ -228,7 +228,7 @@ mod client_test {
 
     use crate::inner_stream::HandshakeType;
 
-    use super::NetwrkStream;
+    use super::Stream;
 
     const ADDR: &'static str = "127.0.0.1:0";
 
@@ -260,20 +260,16 @@ mod client_test {
         other_stream.close().await.unwrap();
     }
 
-    async fn get_netwrk_streams() -> (NetwrkStream<TestMessage>, NetwrkStream<TestMessage>) {
+    async fn get_netwrk_streams() -> (Stream<TestMessage>, Stream<TestMessage>) {
         let (stream, other_stream) = get_streams(ADDR).await;
 
-        let other_handle = tokio::spawn(NetwrkStream::from_stream(
+        let other_handle = tokio::spawn(Stream::from_stream(
             other_stream,
             None,
             HandshakeType::Responder,
         ));
 
-        let handle = tokio::spawn(NetwrkStream::from_stream(
-            stream,
-            None,
-            HandshakeType::Initiator,
-        ));
+        let handle = tokio::spawn(Stream::from_stream(stream, None, HandshakeType::Initiator));
 
         let (stream, _) = handle.await.unwrap().unwrap();
         let other_stream = other_handle.await.unwrap().map(|(v, _)| v).unwrap();
