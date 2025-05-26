@@ -1,12 +1,5 @@
 # Banana Messenger
 
-Cryptographic algorithms:
-- Password hashing: Argon2id
-- Hashing: Sha256
-- Symmetric encryption: ChaCha20Poly1305
-- Signatures: Ed25519
-- Key exchange: X25519
-
 Database: rusqlite
 
 First keys are exchanged with the help of X25519. Then the shared key is turned into a ChaCha20Poly1205 key and the communication will be encrypted with this shared key. This will happen for Banana Messenger Core to Banana Messenger Core as well as Banana Train to Banana Train and Banana Train to Banana Messenger Core and Banana Messener Core to Banana Train. Each message will get signed so that the reciepient can ensure that the message is from the right account.
