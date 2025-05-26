@@ -1,5 +1,7 @@
+use std::time::Duration;
+
 use bytes::Bytes;
-use futures::{SinkExt, StreamExt};
+use futures::{SinkExt, StreamExt, TryStreamExt};
 use log::info;
 use snow::TransportState;
 use tokio::net::{TcpStream, ToSocketAddrs};
@@ -101,18 +103,34 @@ impl InnerStream {
     /// # Errors
     ///
     /// Will result in a [`Error::Io`] if a the stream errors.
-    pub async fn read(&mut self) -> Option<Result<Vec<u8>, Error>> {
-        let bytes = match self.sink.next().await? {
-            Ok(bytes) => bytes,
-            Err(e) => return Some(Err(Error::Io(e))),
+    pub async fn read(&mut self) -> Result<Option<Vec<u8>>, Error> {
+        let bytes = match self.sink.try_next().await? {
+            Some(bytes) => bytes,
+            None => return Err(Error::NotAvailable),
         };
 
-        let len = match self.transport.read_message(&bytes, &mut *self.buf) {
+        self.transport_read(&bytes).await
+    }
+
+    /// Try to read from stream. Returns immediately when no message is available.
+    pub async fn try_read(&mut self) -> Result<Option<Vec<u8>>, Error> {
+        let bytes = match tokio::time::timeout(Duration::from_millis(0), self.sink.next()).await {
+            Ok(Some(Ok(bytes))) => bytes,
+            Ok(Some(Err(e))) => return Err(Error::Io(e)),
+            Ok(None) => return Err(Error::Dead),
+            Err(_) => return Ok(None),
+        };
+
+        self.transport_read(&bytes).await
+    }
+
+    async fn transport_read(&mut self, bytes: &[u8]) -> Result<Option<Vec<u8>>, Error> {
+        let len = match self.transport.read_message(bytes, &mut *self.buf) {
             Ok(len) => len,
-            Err(e) => return Some(Err(Error::Snow(e))),
+            Err(e) => return Err(Error::Snow(e)),
         };
 
-        Some(Ok(self.buf[..len].to_vec()))
+        Ok(Some(self.buf[..len].to_vec()))
     }
 
     /// Get the remote public key.

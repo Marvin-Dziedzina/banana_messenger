@@ -122,15 +122,14 @@ where
     pub async fn batch_receive(&mut self) -> Option<Vec<M>> {
         let msgs: Vec<M> = std::mem::take(&mut *self.message_buf.lock().await).into();
 
-        if msgs.len() > 0 { Some(msgs) } else { None }
+        if !msgs.is_empty() { Some(msgs) } else { None }
     }
 
     /// Wait for the next message to arrive. When there is a message in buffer it will immediately return.
     pub async fn wait_until_receive(&mut self) -> M {
         loop {
-            match self.receive().await {
-                Some(msg) => return msg,
-                None => (),
+            if let Some(msg) = self.receive().await {
+                return msg;
             };
 
             // Wait for a notification or timeout.
@@ -179,13 +178,10 @@ where
                 return Ok(());
             };
 
-            while let Some(res) = inner_stream.lock().await.read().await {
+            while let Ok(res) = inner_stream.lock().await.try_read().await {
                 let bytes = match res {
-                    Ok(bytes) => bytes,
-                    Err(e) => {
-                        warn!("Failed to read bytes: {}", e);
-                        continue;
-                    }
+                    Some(bytes) => bytes,
+                    None => continue,
                 };
 
                 let netwrk_message: NetwrkMessage<M> = match decode(&bytes) {
@@ -238,7 +234,6 @@ mod client_test {
 
     #[tokio::test]
     async fn test_netwrk_stream() {
-        todo!("Fix");
         let (mut stream, mut other_stream) = get_netwrk_streams().await;
 
         stream.send(TestMessage::Foo).await.unwrap();

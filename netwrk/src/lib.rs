@@ -10,7 +10,7 @@ pub mod stream;
 
 type FramedStream = Framed<TcpStream, LengthDelimitedCodec>;
 
-const NOISE_PARAMS: &'static str = "Noise_XX_25519_ChaChaPoly_BLAKE2s";
+const NOISE_PARAMS: &str = "Noise_XX_25519_ChaChaPoly_BLAKE2s";
 
 const MESSAGE_PROCESSING_INTERVALL: Duration = Duration::from_millis(5);
 
@@ -39,6 +39,7 @@ pub enum Error {
     BincodeDecode(bincode::error::DecodeError),
     EOF,
     Dead,
+    NotAvailable,
 }
 
 impl From<snow::Keypair> for SerializableKeypair {
@@ -81,6 +82,7 @@ impl std::fmt::Display for Error {
             Self::BincodeDecode(e) => write!(f, "Bincode Decode Error: {}", e),
             Self::EOF => write!(f, "EOF"),
             Self::Dead => write!(f, "Dead"),
+            Self::NotAvailable => write!(f, "Not avialable"),
         }?;
         write!(f, " }}")
     }
