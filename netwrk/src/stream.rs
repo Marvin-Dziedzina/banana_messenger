@@ -15,8 +15,9 @@ use tokio::{
 };
 
 use crate::{
-    Error, MESSAGE_PROCESSING_INTERVALL, NetwrkMessage, SerializableKeypair, decode, encode,
+    Error, MESSAGE_PROCESSING_INTERVALL, NetwrkMessage, decode, encode,
     inner_stream::{HandshakeType, InnerStream},
+    serialisable_keypair::SerializableKeypair,
 };
 
 pub struct NetwrkStream<M>
@@ -148,9 +149,12 @@ where
     ///
     /// The current messages in buffer will be returned.
     pub async fn close(self) -> Result<VecDeque<M>, Error> {
-        if self.is_dead() {
+        if !self.is_dead() {
             Self::send_netwrk_message(&self.inner, NetwrkMessage::<M>::Disconnect).await?;
+            self.is_dead.store(true, Ordering::Release);
         };
+
+        let _ = self.handle_incoming_task.await??;
 
         Ok(std::mem::take(&mut *self.message_buf.lock().await))
     }
@@ -173,40 +177,40 @@ where
         message_buf: Arc<Mutex<VecDeque<M>>>,
         new_msg_notify: Arc<Notify>,
     ) -> Result<(), Error> {
-        loop {
+        while let Ok(res) = inner_stream.lock().await.try_read().await {
             if is_dead.load(Ordering::Relaxed) {
                 return Ok(());
             };
 
-            while let Ok(res) = inner_stream.lock().await.try_read().await {
-                let bytes = match res {
-                    Some(bytes) => bytes,
-                    None => continue,
-                };
+            let bytes = match res {
+                Some(bytes) => bytes,
+                None => continue,
+            };
 
-                let netwrk_message: NetwrkMessage<M> = match decode(&bytes) {
-                    Ok(netwrk_message) => netwrk_message,
-                    Err(e) => {
-                        warn!("Failed to decode netwrk message: {}", e);
-                        continue;
-                    }
-                };
-
-                match netwrk_message {
-                    NetwrkMessage::Message(msg) => {
-                        message_buf.lock().await.push_back(msg);
-                        new_msg_notify.notify_waiters();
-                    }
-
-                    NetwrkMessage::Disconnect => {
-                        is_dead.store(true, Ordering::Release);
-                        return Ok(());
-                    }
+            let netwrk_message: NetwrkMessage<M> = match decode(&bytes) {
+                Ok(netwrk_message) => netwrk_message,
+                Err(e) => {
+                    warn!("Failed to decode netwrk message: {}", e);
+                    continue;
                 }
-            }
+            };
+
+            match netwrk_message {
+                NetwrkMessage::Message(msg) => {
+                    message_buf.lock().await.push_back(msg);
+                    new_msg_notify.notify_waiters();
+                }
+
+                NetwrkMessage::Disconnect => {
+                    is_dead.store(true, Ordering::Release);
+                    return Ok(());
+                }
+            };
 
             tokio::time::sleep(MESSAGE_PROCESSING_INTERVALL).await;
         }
+
+        Ok(())
     }
 
     /// Is [`NetwrkStream`] dead.
@@ -217,6 +221,8 @@ where
 
 #[cfg(test)]
 mod client_test {
+    use std::time::Duration;
+
     use serde::{Deserialize, Serialize};
     use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
 
@@ -243,6 +249,15 @@ mod client_test {
         other_stream.send(TestMessage::Bar).await.unwrap();
 
         assert_eq!(stream.wait_until_receive().await, TestMessage::Bar);
+
+        assert!(!stream.is_dead());
+        assert!(!other_stream.is_dead());
+
+        stream.close().await.unwrap();
+
+        tokio::time::sleep(Duration::from_millis(1)).await;
+        assert!(other_stream.is_dead());
+        other_stream.close().await.unwrap();
     }
 
     async fn get_netwrk_streams() -> (NetwrkStream<TestMessage>, NetwrkStream<TestMessage>) {

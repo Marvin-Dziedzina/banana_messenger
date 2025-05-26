@@ -7,7 +7,7 @@ use snow::TransportState;
 use tokio::net::{TcpStream, ToSocketAddrs};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
-use crate::{Error, FramedStream, NOISE_PARAMS, SerializableKeypair};
+use crate::{Error, FramedStream, NOISE_PARAMS, serialisable_keypair::SerializableKeypair};
 
 pub struct InnerStream {
     /// Sender and receiver
@@ -220,7 +220,7 @@ mod test_inner_stream {
     use serde::{Deserialize, Serialize};
     use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
 
-    use crate::{NOISE_PARAMS, inner_stream::InnerStream};
+    use crate::inner_stream::InnerStream;
 
     use super::HandshakeType;
 

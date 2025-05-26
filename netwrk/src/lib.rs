@@ -4,8 +4,9 @@ use serde::{Deserialize, Serialize};
 use tokio::net::TcpStream;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
-mod inner_stream;
+pub mod inner_stream;
 pub mod listener;
+pub mod serialisable_keypair;
 pub mod stream;
 
 type FramedStream = Framed<TcpStream, LengthDelimitedCodec>;
@@ -25,40 +26,16 @@ where
     Message(M),
 }
 
-#[derive(Debug, Serialize, Deserialize, zeroize::Zeroize, zeroize::ZeroizeOnDrop)]
-pub struct SerializableKeypair {
-    private: Vec<u8>,
-    #[zeroize(skip)]
-    public: Vec<u8>,
-}
-
 #[derive(Debug)]
 pub enum Error {
     Io(std::io::Error),
     Snow(snow::Error),
     BincodeEncode(bincode::error::EncodeError),
     BincodeDecode(bincode::error::DecodeError),
+    TokioJoinError(tokio::task::JoinError),
     EOF,
     Dead,
     NotAvailable,
-}
-
-impl From<snow::Keypair> for SerializableKeypair {
-    fn from(keypair: snow::Keypair) -> Self {
-        Self {
-            private: keypair.private,
-            public: keypair.public,
-        }
-    }
-}
-
-impl From<SerializableKeypair> for snow::Keypair {
-    fn from(ser_keypair: SerializableKeypair) -> Self {
-        Self {
-            private: ser_keypair.private.clone(),
-            public: ser_keypair.public.clone(),
-        }
-    }
 }
 
 impl From<std::io::Error> for Error {
@@ -73,6 +50,12 @@ impl From<snow::Error> for Error {
     }
 }
 
+impl From<tokio::task::JoinError> for Error {
+    fn from(join_error: tokio::task::JoinError) -> Self {
+        Self::TokioJoinError(join_error)
+    }
+}
+
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Netwrk Error: {{ ")?;
@@ -81,6 +64,7 @@ impl std::fmt::Display for Error {
             Self::Snow(e) => write!(f, "Snow Error: {}", e),
             Self::BincodeEncode(e) => write!(f, "Bincode Encode Error: {}", e),
             Self::BincodeDecode(e) => write!(f, "Bincode Decode Error: {}", e),
+            Self::TokioJoinError(e) => write!(f, "Tokio Join Error: {}", e),
             Self::EOF => write!(f, "EOF"),
             Self::Dead => write!(f, "Dead"),
             Self::NotAvailable => write!(f, "Not avialable"),
