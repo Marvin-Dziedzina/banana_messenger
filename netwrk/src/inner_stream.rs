@@ -150,6 +150,16 @@ impl InnerStream {
             .into()
     }
 
+    /// Get the local address.
+    pub fn local_address(&self) -> Result<std::net::SocketAddr, Error> {
+        self.sink.get_ref().local_addr().map_err(Error::Io)
+    }
+
+    /// Get the remote address.
+    pub fn remote_address(&self) -> Result<std::net::SocketAddr, Error> {
+        self.sink.get_ref().peer_addr().map_err(Error::Io)
+    }
+
     async fn handshake(
         sink: &mut FramedStream,
         handshake_state: snow::HandshakeState,
@@ -273,6 +283,22 @@ mod test_inner_stream {
         let bytes = other_stream.next().await.unwrap().unwrap();
 
         assert_eq!(msg, bytes);
+    }
+
+    #[tokio::test]
+    async fn test_local_address() {
+        let (stream, other_stream) = get_inner_streams().await;
+
+        let _ = stream.local_address().unwrap();
+        let _ = other_stream.local_address().unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_remote_address() {
+        let (stream, other_stream) = get_inner_streams().await;
+
+        let _ = stream.remote_address().unwrap();
+        let _ = other_stream.remote_address().unwrap();
     }
 
     #[tokio::test]

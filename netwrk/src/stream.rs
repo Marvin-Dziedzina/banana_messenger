@@ -225,6 +225,16 @@ where
     pub fn generate_keypair() -> SerializableKeypair {
         InnerStream::generate_keypair()
     }
+
+    /// Get the local address.
+    pub async fn local_address(&self) -> Result<std::net::SocketAddr, Error> {
+        self.inner.lock().await.local_address()
+    }
+
+    /// Get the remote address.
+    pub async fn remote_address(&self) -> Result<std::net::SocketAddr, Error> {
+        self.inner.lock().await.remote_address()
+    }
 }
 
 #[cfg(test)]
@@ -271,6 +281,22 @@ mod client_test {
     #[tokio::test]
     async fn generate_keypair() {
         let _ = Stream::<TestMessage>::generate_keypair();
+    }
+
+    #[tokio::test]
+    async fn test_local_address() {
+        let (stream, other_stream) = get_netwrk_streams().await;
+
+        let _ = stream.local_address().await.unwrap();
+        let _ = other_stream.local_address().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_remote_address() {
+        let (stream, other_stream) = get_netwrk_streams().await;
+
+        let _ = stream.remote_address().await.unwrap();
+        let _ = other_stream.remote_address().await.unwrap();
     }
 
     async fn get_netwrk_streams() -> (Stream<TestMessage>, Stream<TestMessage>) {
