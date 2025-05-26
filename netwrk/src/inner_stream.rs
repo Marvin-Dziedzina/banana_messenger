@@ -142,6 +142,14 @@ impl InnerStream {
             .to_vec()
     }
 
+    /// Generate a new [`SerializableKeypair`].
+    pub fn generate_keypair() -> SerializableKeypair {
+        snow::Builder::new(NOISE_PARAMS.parse().unwrap())
+            .generate_keypair()
+            .expect("Failed to generate new keypair")
+            .into()
+    }
+
     async fn handshake(
         sink: &mut FramedStream,
         handshake_state: snow::HandshakeState,
@@ -265,6 +273,11 @@ mod test_inner_stream {
         let bytes = other_stream.next().await.unwrap().unwrap();
 
         assert_eq!(msg, bytes);
+    }
+
+    #[tokio::test]
+    async fn test_generate_keypair() {
+        let _ = InnerStream::generate_keypair();
     }
 
     #[tokio::test]

@@ -155,7 +155,7 @@ where
             self.is_dead.store(true, Ordering::Release);
         };
 
-        let _ = self.handle_incoming_task.await??;
+        self.handle_incoming_task.await??;
 
         Ok(std::mem::take(&mut *self.message_buf.lock().await))
     }
@@ -218,6 +218,13 @@ where
     pub fn is_dead(&self) -> bool {
         self.is_dead.load(Ordering::Relaxed)
     }
+
+    /// Generate a new [`SerializableKeypair`].
+    ///
+    /// This [`SerializableKeypair`] can be stored.
+    pub fn generate_keypair() -> SerializableKeypair {
+        InnerStream::generate_keypair()
+    }
 }
 
 #[cfg(test)]
@@ -259,6 +266,11 @@ mod client_test {
         tokio::time::sleep(Duration::from_millis(1)).await;
         assert!(other_stream.is_dead());
         other_stream.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn generate_keypair() {
+        let _ = Stream::<TestMessage>::generate_keypair();
     }
 
     async fn get_netwrk_streams() -> (Stream<TestMessage>, Stream<TestMessage>) {
