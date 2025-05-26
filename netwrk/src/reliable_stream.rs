@@ -132,7 +132,7 @@ where
 
     /// Receive a available message. Returns [`None`] if no messages are available.
     pub async fn try_receive(&mut self) -> Option<M> {
-        if self.message_receiver.is_closed() {
+        if self.is_closed() {
             return None;
         };
 
@@ -141,12 +141,11 @@ where
 
     /// Receive all currently available messages.
     pub fn batch_receive(&mut self) -> Option<Vec<M>> {
-        if self.message_receiver.is_closed() {
+        if self.is_closed() {
             return None;
         };
 
         let mut buf = Vec::new();
-
         while let Ok(msg) = self.message_receiver.try_recv() {
             buf.push(msg);
         }
@@ -154,9 +153,26 @@ where
         if !buf.is_empty() { Some(buf) } else { None }
     }
 
+    /// Receive all available messages. Yields when one or more messages are read.
+    pub async fn async_batch_receive(&mut self) -> Option<Vec<M>> {
+        if self.is_closed() {
+            return None;
+        };
+
+        let mut buf = Vec::new();
+        if let Some(first) = self.message_receiver.recv().await {
+            buf.push(first);
+        };
+        while let Ok(msg) = self.message_receiver.try_recv() {
+            buf.push(msg);
+        }
+
+        Some(buf)
+    }
+
     /// Receive the next message. Yield once a message is available.
     pub async fn receive(&mut self) -> Option<M> {
-        if self.message_receiver.is_closed() {
+        if self.is_closed() {
             return None;
         };
 
@@ -184,6 +200,11 @@ where
         netwrk_message: NetworkMessage<M>,
     ) -> Result<(), Error> {
         inner.lock().await.send(&encode(netwrk_message)?).await
+    }
+
+    /// Is message receiver closed.
+    fn is_closed(&self) -> bool {
+        self.message_receiver.is_closed()
     }
 
     /// Get the remote public key.
