@@ -3,7 +3,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-use log::warn;
+use log::{debug, warn};
 use serde::{Deserialize, Serialize};
 use tokio::{
     net::{TcpStream, ToSocketAddrs},
@@ -12,11 +12,12 @@ use tokio::{
 };
 
 use crate::{
-    Error, NetworkMessage, decode, encode,
+    Error, NetworkMessage, Reason, VERSION_MAJOR_MINOR, decode, encode,
     encrypted_socket::{EncryptedSocket, HandshakeType},
     serialisable_keypair::SerializableKeypair,
 };
 
+/// A [`ReliableStream`].
 #[derive(Debug)]
 pub struct ReliableStream<M>
 where
@@ -27,7 +28,7 @@ where
     inner: Arc<Mutex<EncryptedSocket>>,
     message_receiver: tokio::sync::mpsc::Receiver<M>,
 
-    handle_incoming_task: JoinHandle<Result<(), Error>>,
+    handle_incoming_task: JoinHandle<Reason>,
 }
 
 impl<M> ReliableStream<M>
@@ -111,14 +112,22 @@ where
             message_sender,
         ));
 
-        Ok(Self {
+        let reliable_stream = Self {
             is_dead,
 
             inner,
             message_receiver,
 
             handle_incoming_task,
-        })
+        };
+
+        Self::send_netwrk_message(
+            &mut reliable_stream.inner.lock().await,
+            NetworkMessage::Version(VERSION_MAJOR_MINOR.to_string()),
+        )
+        .await?;
+
+        Ok(reliable_stream)
     }
 
     /// Send a message `M`.
@@ -127,7 +136,37 @@ where
             return Err(Error::Dead);
         };
 
-        Self::send_netwrk_message(&self.inner, NetworkMessage::Message(message)).await
+        Self::send_message(&mut self.inner.lock().await, message).await
+    }
+
+    /// Send a batch of messages `M`.
+    pub async fn send_batch(&mut self, messages: Vec<M>) -> Result<(), Error> {
+        if self.is_dead() {
+            return Err(Error::Dead);
+        };
+
+        let mut inner_lock = self.inner.lock().await;
+        for msg in messages {
+            Self::send_message(&mut inner_lock, msg).await?;
+        }
+
+        Ok(())
+    }
+
+    /// Send a `M`.
+    async fn send_message<'a>(
+        inner: &mut tokio::sync::MutexGuard<'a, EncryptedSocket>,
+        message: M,
+    ) -> Result<(), Error> {
+        Self::send_netwrk_message(inner, NetworkMessage::Message(message)).await
+    }
+
+    /// Send a [`NetworkMessage`].
+    async fn send_netwrk_message<'a>(
+        inner: &mut tokio::sync::MutexGuard<'a, EncryptedSocket>,
+        netwrk_message: NetworkMessage<M>,
+    ) -> Result<(), Error> {
+        inner.send(&encode(netwrk_message)?).await
     }
 
     /// Receive a available message. Returns [`None`] if no messages are available.
@@ -140,14 +179,23 @@ where
     }
 
     /// Receive all currently available messages.
-    pub fn batch_receive(&mut self) -> Option<Vec<M>> {
+    pub fn receive_batch(&mut self) -> Option<Vec<M>> {
+        use tokio::sync::mpsc::error::TryRecvError;
+
         if self.is_closed() {
             return None;
         };
 
         let mut buf = Vec::new();
-        while let Ok(msg) = self.message_receiver.try_recv() {
-            buf.push(msg);
+        loop {
+            match self.message_receiver.try_recv() {
+                Ok(msg) => buf.push(msg),
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    Self::set_is_dead(&self.is_dead, true);
+                    break;
+                }
+            }
         }
 
         if !buf.is_empty() { Some(buf) } else { None }
@@ -182,29 +230,21 @@ where
     /// Close the connection. After that call you can not send and receive any messages anymore.
     ///
     /// The current messages in buffer will be returned.
-    pub async fn close(mut self) -> Result<Option<Vec<M>>, Error> {
+    pub async fn close(mut self) -> Result<(Reason, Option<Vec<M>>), Error> {
         if !self.is_dead() {
-            Self::send_netwrk_message(&self.inner, NetworkMessage::<M>::Disconnect).await?;
-            self.is_dead.store(true, Ordering::Release);
+            Self::send_netwrk_message(
+                &mut self.inner.lock().await,
+                NetworkMessage::<M>::Disconnect(Reason::Disconnect),
+            )
+            .await?;
+            Self::set_is_dead(&self.is_dead, true);
         };
 
-        let msgs = self.batch_receive();
+        let msgs = self.receive_batch();
         self.message_receiver.close();
-        self.handle_incoming_task.await??;
+        let reason = self.handle_incoming_task.await?;
 
-        Ok(msgs)
-    }
-
-    async fn send_netwrk_message(
-        inner: &Arc<Mutex<EncryptedSocket>>,
-        netwrk_message: NetworkMessage<M>,
-    ) -> Result<(), Error> {
-        inner.lock().await.send(&encode(netwrk_message)?).await
-    }
-
-    /// Is message receiver closed.
-    fn is_closed(&self) -> bool {
-        self.message_receiver.is_closed()
+        Ok((reason, msgs))
     }
 
     /// Get the remote public key.
@@ -216,10 +256,10 @@ where
         is_dead: Arc<AtomicBool>,
         inner_stream: Arc<Mutex<EncryptedSocket>>,
         message_sender: tokio::sync::mpsc::Sender<M>,
-    ) -> Result<(), Error> {
+    ) -> Reason {
         loop {
             if is_dead.load(Ordering::Relaxed) {
-                return Ok(());
+                return Reason::Dead;
             };
 
             while let Ok(Some(bytes)) = inner_stream.lock().await.try_read().await {
@@ -239,18 +279,40 @@ where
                         };
                     }
 
-                    NetworkMessage::Disconnect => {
-                        is_dead.store(true, Ordering::Release);
-                        return Ok(());
+                    NetworkMessage::Version(v) => {
+                        debug!(
+                            "Netwrk Version: {{ Local: {}; Remote: {} }}",
+                            VERSION_MAJOR_MINOR, v
+                        );
+                        if v != VERSION_MAJOR_MINOR {
+                            return Reason::VersionMismatch;
+                        }
+                    }
+
+                    NetworkMessage::Ping => {}
+                    NetworkMessage::Pong => {}
+
+                    NetworkMessage::Disconnect(reason) => {
+                        Self::set_is_dead(&is_dead, true);
+                        return reason;
                     }
                 };
             }
         }
     }
 
-    /// Is [`NetwrkStream`] dead.
+    /// Is message receiver closed.
+    fn is_closed(&self) -> bool {
+        self.message_receiver.is_closed()
+    }
+
+    /// Is [`ReliableStream`] dead.
     pub fn is_dead(&self) -> bool {
         self.is_dead.load(Ordering::Relaxed)
+    }
+
+    fn set_is_dead(is_dead: &Arc<AtomicBool>, b: bool) {
+        is_dead.store(b, Ordering::Release);
     }
 
     /// Generate a new [`SerializableKeypair`].
@@ -272,7 +334,7 @@ where
 }
 
 #[cfg(test)]
-mod client_test {
+mod reliable_stream_test {
     use std::time::Duration;
 
     use serde::{Deserialize, Serialize};
@@ -293,7 +355,7 @@ mod client_test {
 
     #[tokio::test]
     async fn test_reliable_stream() {
-        let ((mut stream, key), (mut other_stream, other_key)) = get_netwrk_streams().await;
+        let ((mut stream, key), (mut other_stream, other_key)) = get_reliable_streams().await;
 
         stream.send(TestMessage::Foo).await.unwrap();
 
@@ -323,7 +385,7 @@ mod client_test {
 
     #[tokio::test]
     async fn test_local_address() {
-        let ((stream, _), (other_stream, _)) = get_netwrk_streams().await;
+        let ((stream, _), (other_stream, _)) = get_reliable_streams().await;
 
         let _ = stream.local_address().await.unwrap();
         let _ = other_stream.local_address().await.unwrap();
@@ -331,13 +393,13 @@ mod client_test {
 
     #[tokio::test]
     async fn test_remote_address() {
-        let ((stream, _), (other_stream, _)) = get_netwrk_streams().await;
+        let ((stream, _), (other_stream, _)) = get_reliable_streams().await;
 
         let _ = stream.remote_address().await.unwrap();
         let _ = other_stream.remote_address().await.unwrap();
     }
 
-    async fn get_netwrk_streams() -> (
+    async fn get_reliable_streams() -> (
         (ReliableStream<TestMessage>, SerializableKeypair),
         (ReliableStream<TestMessage>, SerializableKeypair),
     ) {
@@ -377,7 +439,7 @@ mod client_test {
 
     #[tokio::test]
     async fn test_get_netwrk_streams() {
-        let _ = get_netwrk_streams().await;
+        let _ = get_reliable_streams().await;
     }
 
     #[tokio::test]

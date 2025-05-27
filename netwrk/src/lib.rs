@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpStream;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
@@ -11,9 +9,9 @@ pub mod serialisable_keypair;
 
 type FramedStream = Framed<TcpStream, LengthDelimitedCodec>;
 
-const NOISE_PARAMS: &str = "Noise_XX_25519_ChaChaPoly_BLAKE2s";
+const VERSION_MAJOR_MINOR: &str = env!("VERSION_MAJOR_MINOR");
 
-const CONNECTION_ACCEPTION_TIMEOUT: Duration = Duration::from_millis(1);
+const NOISE_PARAMS: &str = "Noise_XX_25519_ChaChaPoly_BLAKE2s";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(bound(deserialize = "M: for<'a> Deserialize<'a>"))]
@@ -21,9 +19,24 @@ pub enum NetworkMessage<M>
 where
     M: Serialize + for<'a> Deserialize<'a>,
 {
-    Disconnect,
-
     Message(M),
+
+    Version(String),
+
+    Ping,
+    Pong,
+
+    Disconnect(Reason),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Reason {
+    /// Normal disconnect
+    Disconnect,
+    VersionMismatch,
+    /// Timeout. No message received for too long.
+    Timeout,
+    Dead,
 }
 
 #[derive(Debug)]
@@ -38,6 +51,19 @@ pub enum Error {
     AlreadyRunning,
     NotRunning,
 }
+
+impl std::fmt::Display for Reason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Disconnect => write!(f, "Disconnect"),
+            Self::VersionMismatch => write!(f, "Version mismatch"),
+            Self::Timeout => write!(f, "Timeout"),
+            Self::Dead => write!(f, "Dead"),
+        }
+    }
+}
+
+impl std::error::Error for Reason {}
 
 impl From<std::io::Error> for Error {
     fn from(io_error: std::io::Error) -> Self {
@@ -93,7 +119,7 @@ where
         .map_err(Error::BincodeDecode)
 }
 
-fn bincode_config() -> bincode::config::Configuration<bincode::config::BigEndian> {
+const fn bincode_config() -> bincode::config::Configuration<bincode::config::BigEndian> {
     bincode::config::standard().with_big_endian()
 }
 

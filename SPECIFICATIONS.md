@@ -2,8 +2,6 @@
 
 Database: rusqlite
 
-First keys are exchanged with the help of X25519. Then the shared key is turned into a ChaCha20Poly1205 key and the communication will be encrypted with this shared key. This will happen for Banana Messenger Core to Banana Messenger Core as well as Banana Train to Banana Train and Banana Train to Banana Messenger Core and Banana Messener Core to Banana Train. Each message will get signed so that the reciepient can ensure that the message is from the right account.
-
 ## Banana Messenger Core
 
 The Banana Messenger Core is a crate that every front end can simply use to access the Banana Messenger network. The Banana Messenger Core has a easy and carefree API. Easy means that its simple to use and hard to get something wrong. Carefree means that the Banana Messenger Core cares about all keys, encryption, decryption, storing, sending, receiving, users, chats, chat histories and all related data. That is needed so that app developers can easily use this API without compromising important data.
