@@ -1,13 +1,14 @@
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+
 use serde::{Deserialize, Serialize};
-use tokio::net::TcpStream;
-use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
 pub mod encrypted_socket;
 pub mod listener;
 pub mod reliable_stream;
 pub mod serialisable_keypair;
-
-type FramedStream = Framed<TcpStream, LengthDelimitedCodec>;
 
 const VERSION_MAJOR_MINOR: &str = env!("VERSION_MAJOR_MINOR");
 
@@ -23,8 +24,10 @@ where
 
     Version(String),
 
-    Ping,
-    Pong,
+    /// The [`std::time::Instant`] timestamp when Ping was sent.
+    Ping(u128),
+    /// The [`std::time::Instant`] timestamp when Ping was sent.
+    Pong(u128),
 
     Disconnect(Reason),
 }
@@ -121,6 +124,14 @@ where
 
 const fn bincode_config() -> bincode::config::Configuration<bincode::config::BigEndian> {
     bincode::config::standard().with_big_endian()
+}
+
+pub fn get_atomic_bool(atomic_bool: &Arc<AtomicBool>) -> bool {
+    atomic_bool.load(Ordering::Acquire)
+}
+
+fn set_atomic_bool(atomic_bool: &Arc<AtomicBool>, v: bool) {
+    atomic_bool.store(v, Ordering::Release);
 }
 
 #[cfg(test)]

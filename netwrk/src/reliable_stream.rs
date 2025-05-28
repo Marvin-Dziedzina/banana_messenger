@@ -3,25 +3,26 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-use log::{debug, warn};
 use serde::{Deserialize, Serialize};
 use tokio::{
     net::{TcpStream, ToSocketAddrs},
-    sync::Mutex,
+    sync::{Mutex, mpsc::error::TryRecvError},
     task::JoinHandle,
 };
+use tracing::{debug, error, info, trace, warn};
 
 use crate::{
     Error, NetworkMessage, Reason, VERSION_MAJOR_MINOR, decode, encode,
     encrypted_socket::{EncryptedSocket, HandshakeType},
     serialisable_keypair::SerializableKeypair,
+    set_atomic_bool,
 };
 
 /// A [`ReliableStream`].
 #[derive(Debug)]
 pub struct ReliableStream<M>
 where
-    M: Serialize + for<'a> Deserialize<'a> + Send + 'static,
+    M: std::fmt::Debug + Serialize + for<'a> Deserialize<'a> + Send + 'static,
 {
     is_dead: Arc<AtomicBool>,
 
@@ -33,19 +34,21 @@ where
 
 impl<M> ReliableStream<M>
 where
-    M: Serialize + for<'a> Deserialize<'a> + Send + 'static,
+    M: std::fmt::Debug + Serialize + for<'a> Deserialize<'a> + Send + 'static,
 {
     /// Create a new initiator stream. Will return a newly generated [`SerializableKeypair`] if `keypair` is [`None`] otherwise it will return the supplied [`SerializableKeypair`].
     pub async fn connect_initiator<A: ToSocketAddrs>(
         addr: A,
         keypair: Option<SerializableKeypair>,
         max_buffered_messages: usize,
+        connection_timeout: std::time::Duration,
     ) -> Result<(Self, SerializableKeypair), Error> {
         Self::connect_handshake(
             addr,
             keypair,
             HandshakeType::Initiator,
             max_buffered_messages,
+            connection_timeout,
         )
         .await
     }
@@ -55,12 +58,14 @@ where
         addr: A,
         keypair: Option<SerializableKeypair>,
         max_buffered_messages: usize,
+        connection_timeout: std::time::Duration,
     ) -> Result<(Self, SerializableKeypair), Error> {
         Self::connect_handshake(
             addr,
             keypair,
             HandshakeType::Responder,
             max_buffered_messages,
+            connection_timeout,
         )
         .await
     }
@@ -71,12 +76,14 @@ where
         keypair: Option<SerializableKeypair>,
         handshake_type: crate::encrypted_socket::HandshakeType,
         max_buffered_messages: usize,
+        connection_timeout: std::time::Duration,
     ) -> Result<(Self, SerializableKeypair), Error> {
         let (inner, keypair) = match handshake_type {
             HandshakeType::Initiator => EncryptedSocket::new_initiator(addr, keypair).await,
             HandshakeType::Responder => EncryptedSocket::new_responder(addr, keypair).await,
         }?;
-        let netwrk_stream = Self::from_inner_stream(inner, max_buffered_messages).await?;
+        let netwrk_stream =
+            Self::from_inner_stream(inner, max_buffered_messages, connection_timeout).await?;
 
         Ok((netwrk_stream, keypair))
     }
@@ -87,10 +94,12 @@ where
         keypair: Option<SerializableKeypair>,
         handshake_type: crate::encrypted_socket::HandshakeType,
         max_buffered_messages: usize,
+        connection_timeout: std::time::Duration,
     ) -> Result<(Self, SerializableKeypair), Error> {
         let (inner, keypair) =
             EncryptedSocket::from_tcp_stream(tcp_stream, keypair, handshake_type).await?;
-        let netwrk_stream = Self::from_inner_stream(inner, max_buffered_messages).await?;
+        let netwrk_stream =
+            Self::from_inner_stream(inner, max_buffered_messages, connection_timeout).await?;
 
         Ok((netwrk_stream, keypair))
     }
@@ -99,6 +108,7 @@ where
     pub async fn from_inner_stream(
         inner_stream: EncryptedSocket,
         max_buffered_messages: usize,
+        connection_timeout: std::time::Duration,
     ) -> Result<Self, Error> {
         let is_dead = Arc::new(AtomicBool::new(false));
         let inner = Arc::new(Mutex::new(inner_stream));
@@ -108,6 +118,7 @@ where
         let inner_c = inner.clone();
         let handle_incoming_task = tokio::spawn(Self::handle_incoming_messages(
             is_dead_c,
+            connection_timeout,
             inner_c,
             message_sender,
         ));
@@ -169,40 +180,35 @@ where
         inner.send(&encode(netwrk_message)?).await
     }
 
-    /// Receive a available message. Returns [`None`] if no messages are available.
-    pub async fn try_receive(&mut self) -> Option<M> {
+    /// Receive the next message. Yield once a message is available.
+    pub async fn receive(&mut self) -> Option<M> {
         if self.is_closed() {
             return None;
         };
 
-        self.message_receiver.try_recv().ok()
+        self.message_receiver.recv().await
     }
 
-    /// Receive all currently available messages.
-    pub fn receive_batch(&mut self) -> Option<Vec<M>> {
-        use tokio::sync::mpsc::error::TryRecvError;
-
+    /// Receive a available message. Returns [`None`] if no messages are available at the moment.
+    ///
+    /// This function should not be run in a loop without any await in a single threaded runtime. If done it will always return [`None`].
+    pub fn try_receive(&mut self) -> Option<M> {
         if self.is_closed() {
             return None;
         };
 
-        let mut buf = Vec::new();
-        loop {
-            match self.message_receiver.try_recv() {
-                Ok(msg) => buf.push(msg),
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => {
-                    Self::set_is_dead(&self.is_dead, true);
-                    break;
-                }
+        match self.message_receiver.try_recv() {
+            Ok(msg) => Some(msg),
+            Err(TryRecvError::Empty) => None,
+            Err(TryRecvError::Disconnected) => {
+                set_atomic_bool(&self.is_dead, true);
+                None
             }
         }
-
-        if !buf.is_empty() { Some(buf) } else { None }
     }
 
-    /// Receive all available messages. Yields when one or more messages are read.
-    pub async fn async_batch_receive(&mut self) -> Option<Vec<M>> {
+    /// Receive all available messages. Yields when at least one messages where read.
+    pub async fn receive_batch(&mut self) -> Option<Vec<M>> {
         if self.is_closed() {
             return None;
         };
@@ -218,13 +224,27 @@ where
         Some(buf)
     }
 
-    /// Receive the next message. Yield once a message is available.
-    pub async fn receive(&mut self) -> Option<M> {
+    /// Receive all currently available messages.
+    ///
+    /// This function should not be run in a loop without any await in a single threaded runtime. If done it will always return [`None`].
+    pub fn try_receive_batch(&mut self) -> Option<Vec<M>> {
         if self.is_closed() {
             return None;
         };
 
-        self.message_receiver.recv().await
+        let mut buf = Vec::new();
+        loop {
+            match self.message_receiver.try_recv() {
+                Ok(msg) => buf.push(msg),
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    set_atomic_bool(&self.is_dead, true);
+                    break;
+                }
+            }
+        }
+
+        if !buf.is_empty() { Some(buf) } else { None }
     }
 
     /// Close the connection. After that call you can not send and receive any messages anymore.
@@ -237,63 +257,143 @@ where
                 NetworkMessage::<M>::Disconnect(Reason::Disconnect),
             )
             .await?;
-            Self::set_is_dead(&self.is_dead, true);
+            set_atomic_bool(&self.is_dead, true);
         };
 
-        let msgs = self.receive_batch();
+        let msgs = self.try_receive_batch();
         self.message_receiver.close();
         let reason = self.handle_incoming_task.await?;
+        info!("Close: {}", reason);
 
         Ok((reason, msgs))
     }
 
-    /// Get the remote public key.
-    pub async fn remote_public_key(&self) -> Vec<u8> {
-        self.inner.lock().await.get_remote_public_key()
-    }
-
     async fn handle_incoming_messages(
         is_dead: Arc<AtomicBool>,
+        connection_timeout: std::time::Duration,
         inner_stream: Arc<Mutex<EncryptedSocket>>,
         message_sender: tokio::sync::mpsc::Sender<M>,
     ) -> Reason {
+        use std::time::{Duration, Instant};
+
+        use tokio::sync::mpsc::error::TrySendError;
+
+        let stream_start = Instant::now();
+
+        let mut last_heard = Instant::now();
+        let mut last_timeout_ping = Instant::now();
+        let mut round_trip_time = Duration::from_millis(200);
+
+        trace!(
+            "Connection Timeout: {} ms",
+            connection_timeout.mul_f32(0.7).as_millis()
+        );
+
         loop {
             if is_dead.load(Ordering::Relaxed) {
                 return Reason::Dead;
             };
 
-            while let Ok(Some(bytes)) = inner_stream.lock().await.try_read().await {
+            tokio::task::yield_now().await;
+
+            {
+                // Check if timeouted or if ping should be sent.
+                let now = Instant::now();
+                let now_since_last_heard = now.duration_since(last_heard);
+                if now_since_last_heard > connection_timeout {
+                    set_atomic_bool(&is_dead, true);
+                    debug!("Stream timeouted");
+                    continue;
+                } else if now_since_last_heard // TODO: May be a case where it won't ever ping.
+                >= connection_timeout.mul_f32(0.7)
+                    && now.duration_since(last_timeout_ping) > round_trip_time * 2
+                {
+                    if let Err(e) = Self::send_netwrk_message(
+                        &mut inner_stream.lock().await,
+                        NetworkMessage::Ping(stream_start.elapsed().as_nanos()),
+                    )
+                    .await
+                    {
+                        warn!("Failed to send ping: {}", e);
+                        continue;
+                    };
+
+                    debug!("Ping sent");
+                    last_timeout_ping = Instant::now();
+                };
+            }
+
+            let mut inner_lock = inner_stream.lock().await;
+            while let Ok(Some(bytes)) = inner_lock.try_read().await {
                 let netwrk_message: NetworkMessage<M> = match decode(&bytes) {
                     Ok(netwrk_message) => netwrk_message,
                     Err(e) => {
-                        warn!("Failed to decode netwrk message: {}", e);
+                        // TODO: Consider dropping connection when too frequent malformed packages arrive.
+                        warn!("Failed to decode network message: {}", e);
                         continue;
                     }
                 };
 
+                // Random is for offset of pings. The streams should not fire their pings at the same time every time.
+                last_heard =
+                    Instant::now() - Duration::from_millis((rand::random::<u8>() % 100) as u64);
+                trace!(
+                    "Got network message at {}: {:?}",
+                    stream_start.elapsed().as_millis() as u64,
+                    netwrk_message
+                );
+
                 match netwrk_message {
                     NetworkMessage::Message(msg) => {
-                        if let Err(e) = message_sender.send(msg).await {
-                            warn!("Failed to send message to channel: {}", e);
-                            continue;
+                        match message_sender.try_send(msg) {
+                            Ok(_) => (),
+                            Err(TrySendError::Full(_)) => {
+                                warn!("Channel full: messages are being dropped");
+                            }
+                            Err(TrySendError::Closed(_)) => {
+                                error!("Channel receiver was dropped");
+                                set_atomic_bool(&is_dead, true);
+                            }
                         };
                     }
 
                     NetworkMessage::Version(v) => {
-                        debug!(
+                        info!(
                             "Netwrk Version: {{ Local: {}; Remote: {} }}",
                             VERSION_MAJOR_MINOR, v
                         );
                         if v != VERSION_MAJOR_MINOR {
+                            set_atomic_bool(&is_dead, true);
                             return Reason::VersionMismatch;
                         }
                     }
 
-                    NetworkMessage::Ping => {}
-                    NetworkMessage::Pong => {}
+                    NetworkMessage::Ping(timestamp) => {
+                        debug!("Ping received");
+                        if let Err(e) = Self::send_netwrk_message(
+                            &mut inner_lock,
+                            NetworkMessage::Pong(timestamp),
+                        )
+                        .await
+                        {
+                            warn!("Failed to send Pong: {}", e);
+                        };
+                        debug!("Pong sent")
+                    }
+                    NetworkMessage::Pong(timestamp) => {
+                        debug!("Pong received");
+
+                        let rtt_nanos = stream_start.elapsed().as_nanos() - timestamp;
+                        let secs = (rtt_nanos / 1_000_000_000) as u64;
+                        let sub_nanos = (rtt_nanos % 1_000_000_000) as u32;
+                        round_trip_time = Duration::new(secs, sub_nanos);
+
+                        info!("RTT: {} ms", round_trip_time.as_millis());
+                    }
 
                     NetworkMessage::Disconnect(reason) => {
-                        Self::set_is_dead(&is_dead, true);
+                        info!("Received disconnect: {}", reason);
+                        set_atomic_bool(&is_dead, true);
                         return reason;
                     }
                 };
@@ -311,17 +411,6 @@ where
         self.is_dead.load(Ordering::Relaxed)
     }
 
-    fn set_is_dead(is_dead: &Arc<AtomicBool>, b: bool) {
-        is_dead.store(b, Ordering::Release);
-    }
-
-    /// Generate a new [`SerializableKeypair`].
-    ///
-    /// This [`SerializableKeypair`] can be stored.
-    pub fn generate_keypair() -> SerializableKeypair {
-        EncryptedSocket::generate_keypair()
-    }
-
     /// Get the local address.
     pub async fn local_address(&self) -> Result<std::net::SocketAddr, Error> {
         self.inner.lock().await.local_address()
@@ -331,14 +420,27 @@ where
     pub async fn remote_address(&self) -> Result<std::net::SocketAddr, Error> {
         self.inner.lock().await.remote_address()
     }
+
+    /// Get the remote public key.
+    pub async fn remote_public_key(&self) -> Vec<u8> {
+        self.inner.lock().await.get_remote_public_key()
+    }
+
+    /// Generate a new [`SerializableKeypair`].
+    ///
+    /// This [`SerializableKeypair`] can be stored.
+    pub fn generate_keypair() -> SerializableKeypair {
+        EncryptedSocket::generate_keypair()
+    }
 }
 
 #[cfg(test)]
 mod reliable_stream_test {
-    use std::time::Duration;
+    use std::{sync::Once, time::Duration};
 
     use serde::{Deserialize, Serialize};
     use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
+    use tracing::debug;
 
     use crate::{encrypted_socket::HandshakeType, serialisable_keypair::SerializableKeypair};
 
@@ -347,7 +449,9 @@ mod reliable_stream_test {
     const ADDR: &'static str = "127.0.0.1:0";
     const MAX_BUFFERED_MESSAGES: usize = 64;
 
-    #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+    static INIT_LOGGER: Once = Once::new();
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
     enum TestMessage {
         Foo,
         Bar,
@@ -368,19 +472,113 @@ mod reliable_stream_test {
         assert_eq!(key.public, other_stream.remote_public_key().await);
         assert_eq!(other_key.public, stream.remote_public_key().await);
 
+        tokio::time::sleep(Duration::from_secs(3)).await;
+
         assert!(!stream.is_dead());
         assert!(!other_stream.is_dead());
 
         stream.close().await.unwrap();
 
-        tokio::time::sleep(Duration::from_millis(1)).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
         assert!(other_stream.is_dead());
         other_stream.close().await.unwrap();
     }
 
     #[tokio::test]
+    async fn stress_test() {
+        let ((mut stream, _), (mut other_stream, _)) = get_reliable_streams().await;
+
+        let send_task = tokio::spawn(async move {
+            for i in 0..10000 {
+                debug!("Stream Iter: {}", i);
+                stream.send(TestMessage::Foo).await.unwrap();
+
+                // Clear channel
+                let _ = stream.receive_batch().await;
+            }
+
+            tokio::time::sleep(Duration::from_millis(300)).await;
+
+            assert!(stream.close().await.is_ok());
+        });
+
+        let other_send_task = tokio::spawn(async move {
+            for i in 0..10000 {
+                debug!("Other Stream Iter: {}", i);
+                other_stream.send(TestMessage::Bar).await.unwrap();
+
+                // Cleas channel
+                let _ = other_stream.receive_batch().await;
+            }
+
+            tokio::time::sleep(Duration::from_millis(300)).await;
+
+            assert!(other_stream.close().await.is_ok());
+        });
+
+        send_task.await.unwrap();
+        other_send_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_try_receive() {
+        let ((mut stream, _), (mut other_stream, _)) = get_reliable_streams().await;
+
+        assert!(stream.send(TestMessage::Foo).await.is_ok());
+
+        loop {
+            tokio::task::yield_now().await;
+
+            if let Some(msg) = other_stream.try_receive() {
+                assert_eq!(msg, TestMessage::Foo);
+                break;
+            };
+        }
+
+        assert!(stream.close().await.is_ok());
+        assert!(other_stream.close().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_receive_batch() {
+        let ((mut stream, _), (mut other_stream, _)) = get_reliable_streams().await;
+
+        let msgs = vec![TestMessage::Foo, TestMessage::Bar, TestMessage::Bar];
+
+        assert!(stream.send_batch(msgs.clone()).await.is_ok());
+
+        assert_eq!(msgs, other_stream.receive_batch().await.unwrap());
+
+        assert!(stream.close().await.is_ok());
+        assert!(other_stream.close().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_try_receive_batch() {
+        let ((mut stream, _), (mut other_stream, _)) = get_reliable_streams().await;
+
+        let msgs = vec![TestMessage::Foo, TestMessage::Bar, TestMessage::Foo];
+
+        assert!(stream.send_batch(msgs.clone()).await.is_ok());
+
+        loop {
+            tokio::task::yield_now().await;
+
+            if let Some(received) = other_stream.try_receive_batch() {
+                assert_eq!(received, msgs);
+                break;
+            };
+        }
+
+        assert!(stream.close().await.is_ok());
+        assert!(other_stream.close().await.is_ok());
+    }
+
+    #[tokio::test]
     async fn generate_keypair() {
-        let _ = ReliableStream::<TestMessage>::generate_keypair();
+        let keypair = ReliableStream::<TestMessage>::generate_keypair();
+        assert!(!keypair.private.is_empty());
+        assert!(!keypair.public.is_empty());
     }
 
     #[tokio::test]
@@ -410,6 +608,7 @@ mod reliable_stream_test {
             None,
             HandshakeType::Responder,
             MAX_BUFFERED_MESSAGES,
+            Duration::from_secs(1),
         ));
 
         let handle = tokio::spawn(ReliableStream::from_stream(
@@ -417,6 +616,7 @@ mod reliable_stream_test {
             None,
             HandshakeType::Initiator,
             MAX_BUFFERED_MESSAGES,
+            Duration::from_secs(1),
         ));
 
         let pair = handle.await.unwrap().unwrap();
@@ -426,6 +626,8 @@ mod reliable_stream_test {
     }
 
     async fn get_streams<A: ToSocketAddrs>(addr: A) -> (TcpStream, TcpStream) {
+        init_logger();
+
         let listener = TcpListener::bind(addr).await.unwrap();
         let other_addr = listener.local_addr().unwrap();
 
@@ -445,5 +647,11 @@ mod reliable_stream_test {
     #[tokio::test]
     async fn test_get_streams() {
         let _ = get_streams(ADDR).await;
+    }
+
+    fn init_logger() {
+        INIT_LOGGER.call_once(|| {
+            tracing_subscriber::fmt::init();
+        });
     }
 }

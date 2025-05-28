@@ -4,27 +4,29 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
+    time::Duration,
 };
 
-use log::warn;
 use serde::{Deserialize, Serialize};
 use tokio::{
     net::{TcpListener, ToSocketAddrs},
     sync::{Mutex, mpsc::error::TryRecvError},
     task::JoinHandle,
 };
+use tracing::warn;
 
 use crate::{
     Error,
     encrypted_socket::{EncryptedSocket, HandshakeType},
     reliable_stream::ReliableStream,
     serialisable_keypair::SerializableKeypair,
+    set_atomic_bool,
 };
 
 #[derive(Debug)]
 pub struct Listener<M>
 where
-    M: Serialize + for<'a> Deserialize<'a> + Send + 'static,
+    M: std::fmt::Debug + Serialize + for<'a> Deserialize<'a> + Send + 'static,
 {
     is_dead: Arc<AtomicBool>,
 
@@ -40,7 +42,7 @@ where
 
 impl<M> Listener<M>
 where
-    M: Serialize + for<'a> Deserialize<'a> + Send + 'static,
+    M: std::fmt::Debug + Serialize + for<'a> Deserialize<'a> + Send + 'static,
 {
     /// Bind the listener to a address `A`. Will return a newly generated [`SerializableKeypair`] if `keypair` is [`None`] otherwise it will return the supplied [`SerializableKeypair`].
     pub async fn bind<A: ToSocketAddrs>(
@@ -89,7 +91,7 @@ where
         Self::accept_incoming(&self.listener, &self.keypair, self.max_buffered_messages).await
     }
 
-    /// Accept the next connection if ready else return `Ok(None)`.
+    /// Accept the next connection if ready else return [`None`].
     ///
     /// # Errors
     ///
@@ -139,26 +141,6 @@ where
         ))
     }
 
-    fn get_connection_batch_from_receiver(
-        connection_receiver: &mut tokio::sync::mpsc::Receiver<(ReliableStream<M>, SocketAddr)>,
-        is_dead: &Arc<AtomicBool>,
-    ) -> Vec<(ReliableStream<M>, SocketAddr)> {
-        use tokio::sync::mpsc::error::TryRecvError;
-
-        let mut buf = Vec::new();
-        loop {
-            match connection_receiver.try_recv() {
-                Ok(conn) => buf.push(conn),
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => {
-                    Self::set_is_dead(is_dead, true);
-                }
-            }
-        }
-
-        buf
-    }
-
     /// Wait until a connection is established. If no is available wait for one. Only usable id the listener is running.
     ///
     /// # Errors
@@ -172,6 +154,26 @@ where
         };
 
         Ok(self.connection_receiver.recv().await)
+    }
+
+    fn get_connection_batch_from_receiver(
+        connection_receiver: &mut tokio::sync::mpsc::Receiver<(ReliableStream<M>, SocketAddr)>,
+        is_dead: &Arc<AtomicBool>,
+    ) -> Vec<(ReliableStream<M>, SocketAddr)> {
+        use tokio::sync::mpsc::error::TryRecvError;
+
+        let mut buf = Vec::new();
+        loop {
+            match connection_receiver.try_recv() {
+                Ok(conn) => buf.push(conn),
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    set_atomic_bool(is_dead, true);
+                }
+            }
+        }
+
+        buf
     }
 
     /// Start the listener that listens for incoming connections.
@@ -221,6 +223,8 @@ where
             if is_dead.load(Ordering::Acquire) {
                 return Ok(());
             };
+
+            tokio::task::yield_now().await;
 
             let res_conn =
                 Self::try_accept_incoming(&listener, &keypair, max_buffered_messages).await;
@@ -299,15 +303,12 @@ where
                 Some(keypair.as_ref().to_owned()),
                 HandshakeType::Responder,
                 max_buffered_messages,
+                Duration::from_secs(30),
             )
             .await?
             .0,
             addr,
         )))
-    }
-
-    fn set_is_dead(is_dead: &Arc<AtomicBool>, b: bool) {
-        is_dead.store(b, Ordering::Release);
     }
 }
 
@@ -349,9 +350,7 @@ mod test_listener {
 
         stream.send(TestMessage::Foo).await.unwrap();
 
-        tokio::time::sleep(Duration::from_millis(1)).await;
-
-        let recv_msg = remote_stream.try_receive().await.unwrap();
+        let recv_msg = remote_stream.receive().await.unwrap();
         assert_eq!(TestMessage::Foo, recv_msg);
         assert_eq!(keypair.public, remote_stream.remote_public_key().await);
         assert_eq!(remote_keypair.public, stream.remote_public_key().await);
@@ -378,6 +377,7 @@ mod test_listener {
             addr,
             None,
             MAX_BUFFERED_MESSAGES,
+            Duration::from_secs(1),
         ))
     }
 }

@@ -6,5 +6,7 @@ members = ["banana_crypto", "banana_messenger_core", "banana_train", "netwrk"]
 tokio = { version = "1.45.1", features = ["full"] }
 rusqlite = { version = "0.36.0", features = ["bundled"] }
 serde = { version = "1.0.219", features = ["derive"] }
-log = "0.4.27"
 ron = "0.10.1"
+rand = "0.9.1"
+tracing = "0.1.41"
+tracing-subscriber = "0.3.19"

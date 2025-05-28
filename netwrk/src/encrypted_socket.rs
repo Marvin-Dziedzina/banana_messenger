@@ -1,16 +1,16 @@
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt, TryStreamExt, future::poll_fn};
-use log::info;
 use snow::TransportState;
 use tokio::net::{TcpStream, ToSocketAddrs};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
+use tracing::info;
 
-use crate::{Error, FramedStream, NOISE_PARAMS, serialisable_keypair::SerializableKeypair};
+use crate::{Error, NOISE_PARAMS, serialisable_keypair::SerializableKeypair};
 
 #[derive(Debug)]
 pub struct EncryptedSocket {
     /// Sender and receiver
-    sink: FramedStream,
+    sink: Framed<TcpStream, LengthDelimitedCodec>,
     /// En- and decryption
     transport: TransportState,
 
@@ -99,7 +99,7 @@ impl EncryptedSocket {
         Ok(())
     }
 
-    /// Reads a message from stream.
+    /// Reads a message from stream. Yield once a message available and read.
     ///
     /// # Errors
     ///
@@ -169,7 +169,7 @@ impl EncryptedSocket {
     }
 
     async fn handshake(
-        sink: &mut FramedStream,
+        sink: &mut Framed<TcpStream, LengthDelimitedCodec>,
         handshake_state: snow::HandshakeState,
     ) -> Result<TransportState, Error> {
         if handshake_state.is_initiator() {
@@ -180,7 +180,7 @@ impl EncryptedSocket {
     }
 
     async fn initiator_handshake(
-        sink: &mut FramedStream,
+        sink: &mut Framed<TcpStream, LengthDelimitedCodec>,
         mut initiator: snow::HandshakeState,
     ) -> Result<TransportState, Error> {
         let mut buf = [0u8; 65535];
@@ -205,7 +205,7 @@ impl EncryptedSocket {
     }
 
     async fn responder_handshake(
-        sink: &mut FramedStream,
+        sink: &mut Framed<TcpStream, LengthDelimitedCodec>,
         mut responder: snow::HandshakeState,
     ) -> Result<TransportState, Error> {
         let mut buf = [0u8; 65535];
@@ -229,7 +229,7 @@ impl EncryptedSocket {
         Ok(transport)
     }
 
-    fn get_framed_stream(stream: TcpStream) -> FramedStream {
+    fn get_framed_stream(stream: TcpStream) -> Framed<TcpStream, LengthDelimitedCodec> {
         Framed::new(stream, LengthDelimitedCodec::new())
     }
 }
