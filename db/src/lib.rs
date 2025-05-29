@@ -6,6 +6,7 @@ use sled::Db;
 
 pub mod error;
 
+#[derive(Debug)]
 pub struct SledDb {
     db: Db,
 }
@@ -40,6 +41,12 @@ impl SledDb {
             Some(bytes) => Ok(Some(Self::decode(&bytes)?)),
             None => Ok(None),
         }
+    }
+
+    pub fn flush(&self) -> Result<(), Error> {
+        self.db.flush()?;
+
+        Ok(())
     }
 
     pub fn encode<T>(v: T) -> Result<Vec<u8>, Error>
