@@ -1,7 +1,7 @@
 use std::ops::{Deref, DerefMut};
 
 use error::Error;
-use serde::{Deserialize, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use sled::Db;
 
 pub mod error;
@@ -22,8 +22,8 @@ impl SledDb {
 
     pub fn insert<K, V>(&self, key: &K, value: &V) -> Result<Option<V>, Error>
     where
-        K: Serialize + for<'a> Deserialize<'a>,
-        V: Serialize + for<'a> Deserialize<'a>,
+        K: Serialize + DeserializeOwned,
+        V: Serialize + DeserializeOwned,
     {
         match self.db.insert(Self::encode(key)?, Self::encode(value)?)? {
             Some(bytes) => Ok(Self::decode(&bytes)?),
@@ -33,8 +33,8 @@ impl SledDb {
 
     pub fn get<K, V>(&self, key: &K) -> Result<Option<V>, Error>
     where
-        K: Serialize + for<'a> Deserialize<'a>,
-        V: Serialize + for<'a> Deserialize<'a>,
+        K: Serialize + DeserializeOwned,
+        V: Serialize + DeserializeOwned,
     {
         match self.db.get(Self::encode(key)?)? {
             Some(bytes) => Ok(Some(Self::decode(&bytes)?)),
@@ -51,7 +51,7 @@ impl SledDb {
 
     pub fn decode<T>(bytes: &[u8]) -> Result<T, Error>
     where
-        T: for<'a> Deserialize<'a>,
+        T: DeserializeOwned,
     {
         Ok(
             bincode::serde::borrow_decode_from_slice(bytes, Self::bincode_config())
