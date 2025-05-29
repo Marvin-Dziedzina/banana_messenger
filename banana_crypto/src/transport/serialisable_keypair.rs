@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use serde::{Deserialize, Serialize};
 
 use super::Transport;
@@ -74,5 +76,11 @@ impl From<Vec<u8>> for PublicKey {
 impl From<PublicKey> for Vec<u8> {
     fn from(mut v: PublicKey) -> Self {
         std::mem::take(&mut v.0)
+    }
+}
+
+impl Display for PublicKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", hex::encode(&self.0))
     }
 }
