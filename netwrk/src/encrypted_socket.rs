@@ -1,9 +1,9 @@
-use banana_crypto::transport::{Handshake, HandshakeRole, Public, SerializableKeypair, Transport};
+use banana_crypto::transport::{Handshake, HandshakeRole, Keypair, PublicKey, Transport};
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt, TryStreamExt, future::poll_fn};
 use tokio::net::{TcpStream, ToSocketAddrs};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
-use tracing::info;
+use tracing::{info, trace};
 
 use crate::Error;
 
@@ -14,16 +14,15 @@ pub struct EncryptedSocket {
     /// En- and decryption
     transport: Transport,
 
-    /// Preallocated send buffer.
-    pub buf: Box<[u8; u16::MAX as usize]>,
+    buf: Box<[u8; u16::MAX as usize]>,
 }
 
 impl EncryptedSocket {
     /// Create a new initiator [`InnerStream`] from a address. Will return a newly generated [`SerializableKeypair`] if `keypair` is [`None`] otherwise it will return the supplied [`SerializableKeypair`].
     pub async fn new_initiator<A: ToSocketAddrs>(
         addr: A,
-        keypair: Option<SerializableKeypair>,
-    ) -> Result<(Self, SerializableKeypair), Error> {
+        keypair: Option<Keypair>,
+    ) -> Result<(Self, Keypair), Error> {
         Self::from_tcp_stream(
             TcpStream::connect(addr).await?,
             keypair,
@@ -35,8 +34,8 @@ impl EncryptedSocket {
     /// Create a new responder [`InnerStream`] from a address. Will return a newly generated [`SerializableKeypair`] if `keypair` is [`None`] otherwise it will return the supplied [`SerializableKeypair`].
     pub async fn new_responder<A: ToSocketAddrs>(
         addr: A,
-        keypair: Option<SerializableKeypair>,
-    ) -> Result<(Self, SerializableKeypair), Error> {
+        keypair: Option<Keypair>,
+    ) -> Result<(Self, Keypair), Error> {
         Self::from_tcp_stream(
             TcpStream::connect(addr).await?,
             keypair,
@@ -48,12 +47,12 @@ impl EncryptedSocket {
     /// Create a [`InnerStream`] from a [`TcpStream`]. Will return a newly generated [`SerializableKeypair`] if `keypair` is [`None`] otherwise it will return the supplied [`SerializableKeypair`].
     pub async fn from_tcp_stream(
         tcp_stream: TcpStream,
-        keypair: Option<SerializableKeypair>,
+        keypair: Option<Keypair>,
         handshake_role: HandshakeRole,
-    ) -> Result<(Self, SerializableKeypair), Error> {
+    ) -> Result<(Self, Keypair), Error> {
         let (handshake, keypair) = match handshake_role {
-            HandshakeRole::Initiator => Handshake::new(keypair, &handshake_role)?,
-            HandshakeRole::Responder => Handshake::new(keypair, &handshake_role)?,
+            HandshakeRole::Initiator => Handshake::new(keypair, handshake_role)?,
+            HandshakeRole::Responder => Handshake::new(keypair, handshake_role)?,
         };
 
         Self::from_handshake(tcp_stream, handshake)
@@ -73,7 +72,6 @@ impl EncryptedSocket {
         Ok(Self {
             sink,
             transport,
-
             buf: Box::new([0u8; u16::MAX as usize]),
         })
     }
@@ -97,7 +95,7 @@ impl EncryptedSocket {
     /// # Errors
     ///
     /// Will result in a [`Error::Io`] if a the stream errors.
-    pub async fn read(&mut self) -> Result<Option<Vec<u8>>, Error> {
+    pub async fn read(&mut self) -> Result<Option<&[u8]>, Error> {
         let bytes = match self.sink.try_next().await? {
             Some(bytes) => bytes,
             None => return Ok(None),
@@ -107,7 +105,7 @@ impl EncryptedSocket {
     }
 
     /// Try to read from stream. Returns immediately when no message is available.
-    pub async fn try_read(&mut self) -> Result<Option<Vec<u8>>, Error> {
+    pub async fn try_read(&mut self) -> Result<Option<&[u8]>, Error> {
         use std::task::Poll;
 
         let bytes = match poll_fn(|cx| match self.sink.poll_next_unpin(cx) {
@@ -126,28 +124,28 @@ impl EncryptedSocket {
         self.transport_read(&bytes).await
     }
 
-    async fn transport_read(&mut self, bytes: &[u8]) -> Result<Option<Vec<u8>>, Error> {
+    async fn transport_read(&mut self, bytes: &[u8]) -> Result<Option<&[u8]>, Error> {
         let len = match self.transport.read_message(bytes, &mut *self.buf) {
-            Ok(len) => len,
+            Ok(bytes) => bytes,
             Err(e) => return Err(Error::TransportError(e)),
         };
 
-        Ok(Some(self.buf[..len].to_vec()))
+        Ok(Some(&self.buf[..len]))
     }
 
     /// Get the remote public key.
-    pub fn remote_public_key(&self) -> Public {
+    pub fn remote_public_key(&self) -> PublicKey {
         self.transport.remote_public_key()
     }
 
     /// Get the local address.
     pub fn local_address(&self) -> Result<std::net::SocketAddr, Error> {
-        self.sink.get_ref().local_addr().map_err(Error::Io)
+        Ok(self.sink.get_ref().local_addr()?)
     }
 
     /// Get the remote address.
     pub fn remote_address(&self) -> Result<std::net::SocketAddr, Error> {
-        self.sink.get_ref().peer_addr().map_err(Error::Io)
+        Ok(self.sink.get_ref().peer_addr()?)
     }
 
     async fn handshake(
@@ -167,16 +165,22 @@ impl EncryptedSocket {
         let mut buf = [0u8; 65535];
 
         // Send ephemeral public key
-        let len = initiator.write_message(&[], &mut buf)?;
+        trace!("Initiator: Send ephemeral public key");
+        let len = initiator.write_message(&mut buf)?;
         sink.send(Bytes::copy_from_slice(&buf[..len])).await?;
+        trace!("Initiator: Sent ephemeral public key");
 
         // Receive ephemeral and static public keys
+        trace!("Initiator: Receive ephemeral and static public keys");
         let bytes = sink.next().await.unwrap()?;
         initiator.read_message(&bytes, &mut buf)?;
+        trace!("Initiator: Received ephemeral and static public keys");
 
         // Send static public key
-        let len = initiator.write_message(&[], &mut buf)?;
+        trace!("Initiator: Send static public key");
+        let len = initiator.write_message(&mut buf)?;
         sink.send(Bytes::copy_from_slice(&buf[..len])).await?;
+        trace!("Initiator: Sent static public key");
 
         let transport = Transport::try_from(initiator)?;
 
@@ -192,16 +196,22 @@ impl EncryptedSocket {
         let mut buf = [0u8; 65535];
 
         // Receive ephemeral public key
+        trace!("Responder: Receive ephemeral public key");
         let bytes = sink.next().await.unwrap()?;
         let _ = responder.read_message(&bytes, &mut buf)?;
+        trace!("Responder: Received ephemeral public key");
 
         // Send ephemeral and static public keys
-        let len = responder.write_message(&[], &mut buf)?;
+        trace!("Responder: Send ephemeral and static public keys");
+        let len = responder.write_message(&mut buf)?;
         sink.send(Bytes::copy_from_slice(&buf[..len])).await?;
+        trace!("Responder: Sent ephemeral and static public keys");
 
         // Receive static public key
+        trace!("Responder: Receive static public key");
         let bytes = sink.next().await.unwrap()?;
         responder.read_message(&bytes, &mut buf)?;
+        trace!("Responder: Received static public key");
 
         let transport = Transport::try_from(responder)?;
 
@@ -218,7 +228,7 @@ mod test_inner_stream {
     use serde::{Deserialize, Serialize};
     use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
 
-    use crate::encrypted_socket::EncryptedSocket;
+    use crate::{encrypted_socket::EncryptedSocket, netwrk_test::init_logger};
 
     use super::HandshakeRole;
 
@@ -297,6 +307,8 @@ mod test_inner_stream {
     async fn establish_connection<A: ToSocketAddrs + Clone + std::marker::Send + 'static>(
         addr: A,
     ) -> (TcpStream, TcpStream) {
+        init_logger();
+
         let listener = TcpListener::bind(addr).await.unwrap();
         let addr = listener.local_addr().unwrap();
 

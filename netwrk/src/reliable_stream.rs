@@ -3,7 +3,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-use banana_crypto::transport::{HandshakeRole, Public, SerializableKeypair, Transport};
+use banana_crypto::transport::{HandshakeRole, Keypair, PublicKey, Transport};
 use serde::{Deserialize, Serialize};
 use tokio::{
     net::{TcpStream, ToSocketAddrs},
@@ -38,10 +38,10 @@ where
     /// Create a new initiator stream. Will return a newly generated [`SerializableKeypair`] if `keypair` is [`None`] otherwise it will return the supplied [`SerializableKeypair`].
     pub async fn connect_initiator<A: ToSocketAddrs>(
         addr: A,
-        keypair: Option<SerializableKeypair>,
+        keypair: Option<Keypair>,
         max_buffered_messages: usize,
         connection_timeout: std::time::Duration,
-    ) -> Result<(Self, SerializableKeypair), Error> {
+    ) -> Result<(Self, Keypair), Error> {
         Self::connect_handshake(
             addr,
             keypair,
@@ -55,10 +55,10 @@ where
     /// Create a new responder stream. Will return a newly generated [`SerializableKeypair`] if `keypair` is [`None`] otherwise it will return the supplied [`SerializableKeypair`].
     pub async fn connect_responder<A: ToSocketAddrs>(
         addr: A,
-        keypair: Option<SerializableKeypair>,
+        keypair: Option<Keypair>,
         max_buffered_messages: usize,
         connection_timeout: std::time::Duration,
-    ) -> Result<(Self, SerializableKeypair), Error> {
+    ) -> Result<(Self, Keypair), Error> {
         Self::connect_handshake(
             addr,
             keypair,
@@ -72,11 +72,11 @@ where
     /// Connect with a [`HandshakeType`]. Will return a newly generated [`SerializableKeypair`] if `keypair` is [`None`] otherwise it will return the supplied [`SerializableKeypair`].
     async fn connect_handshake<A: ToSocketAddrs>(
         addr: A,
-        keypair: Option<SerializableKeypair>,
+        keypair: Option<Keypair>,
         handshake_role: HandshakeRole,
         max_buffered_messages: usize,
         connection_timeout: std::time::Duration,
-    ) -> Result<(Self, SerializableKeypair), Error> {
+    ) -> Result<(Self, Keypair), Error> {
         let (inner, keypair) = match handshake_role {
             HandshakeRole::Initiator => EncryptedSocket::new_initiator(addr, keypair).await,
             HandshakeRole::Responder => EncryptedSocket::new_responder(addr, keypair).await,
@@ -90,11 +90,11 @@ where
     /// Create a [`Stream`] from a [`TcpStream`] and [`HandshakeType`]. Will return a newly generated [`SerializableKeypair`] if `keypair` is [`None`] otherwise it will return the supplied [`SerializableKeypair`].
     pub async fn from_stream(
         tcp_stream: TcpStream,
-        keypair: Option<SerializableKeypair>,
+        keypair: Option<Keypair>,
         handshake_role: HandshakeRole,
         max_buffered_messages: usize,
         connection_timeout: std::time::Duration,
-    ) -> Result<(Self, SerializableKeypair), Error> {
+    ) -> Result<(Self, Keypair), Error> {
         let (inner, keypair) =
             EncryptedSocket::from_tcp_stream(tcp_stream, keypair, handshake_role).await?;
         let netwrk_stream =
@@ -324,7 +324,7 @@ where
 
             let mut inner_lock = inner_stream.lock().await;
             while let Ok(Some(bytes)) = inner_lock.try_read().await {
-                let netwrk_message: NetworkMessage<M> = match decode(&bytes) {
+                let netwrk_message: NetworkMessage<M> = match decode(bytes) {
                     Ok(netwrk_message) => netwrk_message,
                     Err(e) => {
                         // TODO: Consider dropping connection when too frequent malformed packages arrive.
@@ -421,33 +421,33 @@ where
     }
 
     /// Get the remote public key.
-    pub async fn remote_public_key(&self) -> Public {
+    pub async fn remote_public_key(&self) -> PublicKey {
         self.inner.lock().await.remote_public_key()
     }
 
     /// Generate a new [`SerializableKeypair`].
     ///
     /// This [`SerializableKeypair`] can be stored.
-    pub fn generate_keypair() -> SerializableKeypair {
+    pub fn generate_keypair() -> Keypair {
         Transport::generate_keypair()
     }
 }
 
 #[cfg(test)]
 mod reliable_stream_test {
-    use std::{sync::Once, time::Duration};
+    use std::time::Duration;
 
-    use banana_crypto::transport::{HandshakeRole, SerializableKeypair};
+    use banana_crypto::transport::{HandshakeRole, Keypair};
     use serde::{Deserialize, Serialize};
     use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
     use tracing::debug;
+
+    use crate::netwrk_test::init_logger;
 
     use super::ReliableStream;
 
     const ADDR: &'static str = "127.0.0.1:0";
     const MAX_BUFFERED_MESSAGES: usize = 64;
-
-    static INIT_LOGGER: Once = Once::new();
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
     enum TestMessage {
@@ -589,8 +589,8 @@ mod reliable_stream_test {
     }
 
     async fn get_reliable_streams() -> (
-        (ReliableStream<TestMessage>, SerializableKeypair),
-        (ReliableStream<TestMessage>, SerializableKeypair),
+        (ReliableStream<TestMessage>, Keypair),
+        (ReliableStream<TestMessage>, Keypair),
     ) {
         let (stream, other_stream) = get_streams(ADDR).await;
 
@@ -631,18 +631,12 @@ mod reliable_stream_test {
     }
 
     #[tokio::test]
-    async fn test_get_netwrk_streams() {
+    async fn test_get_reliable_streams() {
         let _ = get_reliable_streams().await;
     }
 
     #[tokio::test]
     async fn test_get_streams() {
         let _ = get_streams(ADDR).await;
-    }
-
-    fn init_logger() {
-        INIT_LOGGER.call_once(|| {
-            tracing_subscriber::fmt::init();
-        });
     }
 }

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["banana_crypto", "banana_messenger_core", "banana_train", "netwrk"]
+members = ["banana_crypto", "banana_messenger_core", "banana_train", "common", "netwrk"]
 
 [workspace.dependencies]
 tokio = { version = "1.45.1", features = ["full"] }

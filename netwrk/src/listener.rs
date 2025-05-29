@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use banana_crypto::transport::{HandshakeRole, SerializableKeypair, Transport};
+use banana_crypto::transport::{HandshakeRole, Keypair, Transport};
 use serde::{Deserialize, Serialize};
 use tokio::{
     net::{TcpListener, ToSocketAddrs},
@@ -31,7 +31,7 @@ where
     connection_receiver: tokio::sync::mpsc::Receiver<(ReliableStream<M>, SocketAddr)>,
     connection_sender: tokio::sync::mpsc::Sender<(ReliableStream<M>, SocketAddr)>,
 
-    keypair: Arc<SerializableKeypair>,
+    keypair: Arc<Keypair>,
     max_buffered_messages: usize,
 }
 
@@ -42,10 +42,10 @@ where
     /// Bind the listener to a address `A`. Will return a newly generated [`SerializableKeypair`] if `keypair` is [`None`] otherwise it will return the supplied [`SerializableKeypair`].
     pub async fn bind<A: ToSocketAddrs>(
         addr: A,
-        keypair: Option<SerializableKeypair>,
+        keypair: Option<Keypair>,
         max_buffered_messages: usize,
         max_buffered_connections: usize,
-    ) -> Result<(Self, SerializableKeypair), Error> {
+    ) -> Result<(Self, Keypair), Error> {
         let keypair = match keypair {
             Some(keypair) => keypair,
             None => Transport::generate_keypair(),
@@ -211,7 +211,7 @@ where
         is_dead: Arc<AtomicBool>,
         listener: Arc<Mutex<TcpListener>>,
         connection_sender: tokio::sync::mpsc::Sender<(ReliableStream<M>, SocketAddr)>,
-        keypair: Arc<SerializableKeypair>,
+        keypair: Arc<Keypair>,
         max_buffered_messages: usize,
     ) -> Result<(), Error> {
         loop {
@@ -250,12 +250,12 @@ where
 
     /// Get the local address.
     pub async fn local_address(&self) -> Result<SocketAddr, Error> {
-        self.listener.lock().await.local_addr().map_err(Error::Io)
+        Ok(self.listener.lock().await.local_addr()?)
     }
 
     async fn accept_incoming(
         listener: &Arc<Mutex<TcpListener>>,
-        keypair: &Arc<SerializableKeypair>,
+        keypair: &Arc<Keypair>,
         max_buffered_messages: usize,
     ) -> Result<Option<(ReliableStream<M>, SocketAddr)>, Error> {
         let raw_conn = listener.lock().await.accept().await?;
@@ -265,7 +265,7 @@ where
 
     async fn try_accept_incoming(
         listener: &Arc<Mutex<TcpListener>>,
-        keypair: &Arc<SerializableKeypair>,
+        keypair: &Arc<Keypair>,
         max_buffered_messages: usize,
     ) -> Result<Option<(ReliableStream<M>, SocketAddr)>, Error> {
         use futures::future::poll_fn;
@@ -289,7 +289,7 @@ where
 
     async fn reliable_stream_from_raw_conn(
         (tcp_stream, addr): (tokio::net::TcpStream, SocketAddr),
-        keypair: &Arc<SerializableKeypair>,
+        keypair: &Arc<Keypair>,
         max_buffered_messages: usize,
     ) -> Result<Option<(ReliableStream<M>, SocketAddr)>, Error> {
         Ok(Some((
@@ -311,7 +311,7 @@ where
 mod test_listener {
     use std::time::Duration;
 
-    use banana_crypto::transport::SerializableKeypair;
+    use banana_crypto::transport::Keypair;
     use serde::{Deserialize, Serialize};
     use tokio::{net::ToSocketAddrs, task::JoinHandle};
 
@@ -360,7 +360,7 @@ mod test_listener {
 
     async fn connect_stream_to_listener<A: ToSocketAddrs + Send + 'static>(
         addr: A,
-    ) -> JoinHandle<Result<(ReliableStream<TestMessage>, SerializableKeypair), crate::Error>> {
+    ) -> JoinHandle<Result<(ReliableStream<TestMessage>, Keypair), crate::Error>> {
         tokio::spawn(ReliableStream::connect_initiator(
             addr,
             None,

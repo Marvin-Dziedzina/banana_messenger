@@ -43,7 +43,7 @@
 /// transport
 use snow::HandshakeState;
 
-use super::{Error, NOISE_PARAMS, SerializableKeypair, Transport};
+use super::{Error, Keypair, NOISE_PARAMS, Transport};
 
 #[derive(Debug)]
 pub struct Handshake {
@@ -54,9 +54,9 @@ pub struct Handshake {
 impl Handshake {
     /// Build a new Handshake.
     pub fn new(
-        keypair: Option<SerializableKeypair>,
-        handshake_role: &HandshakeRole,
-    ) -> Result<(Self, SerializableKeypair), Error> {
+        keypair: Option<Keypair>,
+        handshake_role: HandshakeRole,
+    ) -> Result<(Self, Keypair), Error> {
         let builder = snow::Builder::new(NOISE_PARAMS.parse().unwrap());
         let keypair = match keypair {
             Some(ser_keypair) => ser_keypair.into(),
@@ -72,9 +72,9 @@ impl Handshake {
         Ok((
             Self {
                 handshake,
-                handshake_role: handshake_role.clone(),
+                handshake_role,
             },
-            SerializableKeypair::from(keypair),
+            Keypair::from(keypair),
         ))
     }
 
@@ -82,22 +82,18 @@ impl Handshake {
         &self.handshake_role
     }
 
-    /// Decrypt a message from 'message' into `payload`.
+    /// Read the handshake.
     pub fn read_message(&mut self, message: &[u8], payload: &mut [u8]) -> Result<usize, Error> {
-        self.handshake
-            .read_message(message, payload)
-            .map_err(Error::Snow)
+        Ok(self.handshake.read_message(message, payload)?)
     }
 
-    /// Encrypt a message from `payload` into `message`.
-    pub fn write_message(&mut self, payload: &[u8], message: &mut [u8]) -> Result<usize, Error> {
-        self.handshake
-            .write_message(payload, message)
-            .map_err(Error::Snow)
+    /// Write the handshake response.
+    pub fn write_message(&mut self, message: &mut [u8]) -> Result<usize, Error> {
+        Ok(self.handshake.write_message(&[], message)?)
     }
 
     /// Generate a new [`SerializableKeypair`].
-    pub fn generate_keypair() -> SerializableKeypair {
+    pub fn generate_keypair() -> Keypair {
         Transport::generate_keypair()
     }
 }
