@@ -8,9 +8,9 @@ pub struct Keypair {
     pub public_key: PublicKey,
 }
 
-impl Keypair {
+impl Default for Keypair {
     /// Generate a new [`Keypair`].
-    pub fn new() -> Self {
+    fn default() -> Self {
         Transport::generate_keypair()
     }
 }
