@@ -28,7 +28,7 @@ where
     inner: Arc<Mutex<EncryptedSocket>>,
     message_receiver: tokio::sync::mpsc::Receiver<M>,
 
-    handle_incoming_task: JoinHandle<Reason>,
+    handle_incoming_task: Option<JoinHandle<Reason>>,
 }
 
 impl<M> ReliableStream<M>
@@ -128,7 +128,7 @@ where
             inner,
             message_receiver,
 
-            handle_incoming_task,
+            handle_incoming_task: Some(handle_incoming_task),
         };
 
         Self::send_netwrk_message(
@@ -249,7 +249,7 @@ where
     /// Close the connection. After that call you can not send and receive any messages anymore.
     ///
     /// The current messages in buffer will be returned.
-    pub async fn close(mut self) -> Result<(Reason, Option<Vec<M>>), Error> {
+    pub async fn close(&mut self) -> Result<(Reason, Option<Vec<M>>), Error> {
         if !self.is_dead() {
             Self::send_netwrk_message(
                 &mut self.inner.lock().await,
@@ -261,7 +261,10 @@ where
 
         let msgs = self.try_receive_batch();
         self.message_receiver.close();
-        let reason = self.handle_incoming_task.await?;
+        let reason = match std::mem::take(&mut self.handle_incoming_task) {
+            Some(handle_incoming_task) => handle_incoming_task.await?,
+            None => Reason::Dead,
+        };
         info!("Close: {}", reason);
 
         Ok((reason, msgs))
