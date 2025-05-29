@@ -26,7 +26,7 @@ impl SledDb {
         V: Serialize + DeserializeOwned,
     {
         match self.db.insert(Self::encode(key)?, Self::encode(value)?)? {
-            Some(bytes) => Ok(Self::decode(&bytes)?),
+            Some(bytes) => Ok(Some(Self::decode(&bytes)?)),
             None => Ok(None),
         }
     }
