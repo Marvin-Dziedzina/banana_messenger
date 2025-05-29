@@ -43,8 +43,8 @@ where
     pub async fn bind<A: ToSocketAddrs>(
         addr: A,
         keypair: Option<Keypair>,
-        max_buffered_messages: usize,
         max_buffered_connections: usize,
+        max_buffered_messages: usize,
     ) -> Result<(Self, Keypair), Error> {
         let keypair = match keypair {
             Some(keypair) => keypair,
@@ -332,8 +332,8 @@ mod test_listener {
         let (listener, keypair) = Listener::<TestMessage>::bind(
             ADDR,
             None,
-            MAX_BUFFERED_MESSAGES,
             MAX_BUFFERED_CONNECTIONS,
+            MAX_BUFFERED_MESSAGES,
         )
         .await
         .unwrap();
