@@ -1,1 +1,6 @@
 /target
+
+# Banana Train
+banana_train.conf
+/keypair.db
+/users.db
