@@ -1,10 +1,20 @@
 use serde::{Deserialize, Serialize};
 
+use super::Transport;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Keypair {
     pub private_key: PrivateKey,
     pub public_key: PublicKey,
 }
+
+impl Keypair {
+    /// Generate a new [`Keypair`].
+    pub fn new() -> Self {
+        Transport::generate_keypair()
+    }
+}
+
 impl From<snow::Keypair> for Keypair {
     fn from(keypair: snow::Keypair) -> Self {
         Self {
