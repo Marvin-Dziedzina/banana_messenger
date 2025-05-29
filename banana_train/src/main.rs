@@ -3,6 +3,6 @@ use banana_train::BananaTrain;
 mod banana_train;
 
 #[tokio::main]
-async fn main() {
-    let banana_train = BananaTrain::new();
+async fn main() -> Result<(), anyhow::Error> {
+    BananaTrain::new().await.run().await
 }

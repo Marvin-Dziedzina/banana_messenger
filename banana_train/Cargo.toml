@@ -7,4 +7,5 @@ edition = "2024"
 tokio = { workspace = true }
 rusqlite = { workspace = true }
 ron = { workspace = true }
+anyhow = { workspace = true }
 netwrk = { path = "../netwrk" }
