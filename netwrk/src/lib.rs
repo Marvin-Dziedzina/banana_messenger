@@ -6,6 +6,9 @@ use std::sync::{
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+pub use listener::Listener;
+pub use reliable_stream::ReliableStream;
+
 pub mod encrypted_socket;
 pub mod listener;
 pub mod reliable_stream;
@@ -14,7 +17,7 @@ const VERSION_MAJOR_MINOR: &str = env!("VERSION_MAJOR_MINOR");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(bound(deserialize = "M: for<'a> Deserialize<'a>"))]
-pub enum NetworkMessage<M>
+enum NetworkMessage<M>
 where
     M: Serialize + for<'a> Deserialize<'a>,
 {
