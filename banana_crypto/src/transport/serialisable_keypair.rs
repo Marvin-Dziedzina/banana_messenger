@@ -38,7 +38,7 @@ impl From<Keypair> for snow::Keypair {
 #[derive(Debug, Clone, Serialize, Deserialize, zeroize::Zeroize, zeroize::ZeroizeOnDrop)]
 pub struct PrivateKey(Vec<u8>);
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PublicKey(Vec<u8>);
 
 impl From<&[u8]> for PrivateKey {
