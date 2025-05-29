@@ -63,8 +63,8 @@ mod test_transport {
         let ((mut transport, keypair), (mut other_transport, other_keypair)) =
             get_connected_transport();
 
-        assert_eq!(keypair.public, other_transport.remote_public_key());
-        assert_eq!(other_keypair.public, transport.remote_public_key());
+        assert_eq!(keypair.public_key, other_transport.remote_public_key());
+        assert_eq!(other_keypair.public_key, transport.remote_public_key());
 
         let mut buf = [0u8; u16::MAX as usize];
 

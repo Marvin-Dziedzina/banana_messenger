@@ -467,8 +467,8 @@ mod reliable_stream_test {
 
         assert_eq!(stream.receive().await.unwrap(), TestMessage::Bar);
 
-        assert_eq!(key.public, other_stream.remote_public_key().await);
-        assert_eq!(other_key.public, stream.remote_public_key().await);
+        assert_eq!(key.public_key, other_stream.remote_public_key().await);
+        assert_eq!(other_key.public_key, stream.remote_public_key().await);
 
         tokio::time::sleep(Duration::from_secs(3)).await;
 

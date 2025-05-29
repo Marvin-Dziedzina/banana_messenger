@@ -2,14 +2,14 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Keypair {
-    pub private: PrivateKey,
-    pub public: PublicKey,
+    pub private_key: PrivateKey,
+    pub public_key: PublicKey,
 }
 impl From<snow::Keypair> for Keypair {
     fn from(keypair: snow::Keypair) -> Self {
         Self {
-            private: keypair.private.into(),
-            public: keypair.public.into(),
+            private_key: keypair.private.into(),
+            public_key: keypair.public.into(),
         }
     }
 }
@@ -17,8 +17,8 @@ impl From<snow::Keypair> for Keypair {
 impl From<Keypair> for snow::Keypair {
     fn from(ser_keypair: Keypair) -> Self {
         Self {
-            private: ser_keypair.private.into(),
-            public: ser_keypair.public.into(),
+            private: ser_keypair.private_key.into(),
+            public: ser_keypair.public_key.into(),
         }
     }
 }

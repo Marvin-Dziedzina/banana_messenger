@@ -348,8 +348,8 @@ mod test_listener {
 
         let recv_msg = remote_stream.receive().await.unwrap();
         assert_eq!(TestMessage::Foo, recv_msg);
-        assert_eq!(keypair.public, remote_stream.remote_public_key().await);
-        assert_eq!(remote_keypair.public, stream.remote_public_key().await);
+        assert_eq!(keypair.public_key, remote_stream.remote_public_key().await);
+        assert_eq!(remote_keypair.public_key, stream.remote_public_key().await);
 
         listener.close().await.unwrap();
 
