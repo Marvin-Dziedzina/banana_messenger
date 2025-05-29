@@ -10,8 +10,8 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
+bincode = { workspace = true }
 banana_crypto = { path = "../banana_crypto" }
-bincode = { version = "2.0.1", features = ["serde"] }
 tokio-util = { version = "0.7.15", features = ["codec"] }
 snow = "0.9.6"
 zeroize = { version = "1.8.1", features = ["zeroize_derive"] }
