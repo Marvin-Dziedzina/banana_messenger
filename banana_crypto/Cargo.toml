@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+serde = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
 argon2 = { version = "0.5.3", features = ["password-hash"] }
 chacha20poly1305 = "0.10.1"
 ed25519-dalek = { version = "2.1.1", features = ["serde", "rand_core"] }
@@ -12,4 +15,5 @@ hkdf = "0.12.4"
 sha2 = "0.10.9"
 aead = "0.5.2"
 zeroize = { version = "1.8.1", features = ["zeroize_derive"] }
-serde = { workspace = true }
+snow = "0.9.6"
+tokio-util = { version = "0.7.15", features = ["codec"] }

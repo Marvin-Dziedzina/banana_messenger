@@ -96,6 +96,10 @@ dependencies = [
  "hkdf",
  "serde",
  "sha2",
+ "snow",
+ "tokio",
+ "tokio-util",
+ "tracing",
  "x25519-dalek",
  "zeroize",
 ]
@@ -620,6 +624,7 @@ dependencies = [
 name = "netwrk"
 version = "0.1.0"
 dependencies = [
+ "banana_crypto",
  "bincode",
  "bytes",
  "futures",

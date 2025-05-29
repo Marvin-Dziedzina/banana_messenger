@@ -7,6 +7,7 @@ use std::{
     time::Duration,
 };
 
+use banana_crypto::transport::{HandshakeRole, SerializableKeypair, Transport};
 use serde::{Deserialize, Serialize};
 use tokio::{
     net::{TcpListener, ToSocketAddrs},
@@ -15,13 +16,7 @@ use tokio::{
 };
 use tracing::warn;
 
-use crate::{
-    Error,
-    encrypted_socket::{EncryptedSocket, HandshakeType},
-    reliable_stream::ReliableStream,
-    serialisable_keypair::SerializableKeypair,
-    set_atomic_bool,
-};
+use crate::{Error, reliable_stream::ReliableStream, set_atomic_bool};
 
 #[derive(Debug)]
 pub struct Listener<M>
@@ -53,7 +48,7 @@ where
     ) -> Result<(Self, SerializableKeypair), Error> {
         let keypair = match keypair {
             Some(keypair) => keypair,
-            None => EncryptedSocket::generate_keypair(),
+            None => Transport::generate_keypair(),
         };
 
         let (connection_sender, connection_receiver) =
@@ -301,7 +296,7 @@ where
             ReliableStream::from_stream(
                 tcp_stream,
                 Some(keypair.as_ref().to_owned()),
-                HandshakeType::Responder,
+                HandshakeRole::Responder,
                 max_buffered_messages,
                 Duration::from_secs(30),
             )
@@ -316,6 +311,7 @@ where
 mod test_listener {
     use std::time::Duration;
 
+    use banana_crypto::transport::SerializableKeypair;
     use serde::{Deserialize, Serialize};
     use tokio::{net::ToSocketAddrs, task::JoinHandle};
 
@@ -364,15 +360,7 @@ mod test_listener {
 
     async fn connect_stream_to_listener<A: ToSocketAddrs + Send + 'static>(
         addr: A,
-    ) -> JoinHandle<
-        Result<
-            (
-                ReliableStream<TestMessage>,
-                crate::serialisable_keypair::SerializableKeypair,
-            ),
-            crate::Error,
-        >,
-    > {
+    ) -> JoinHandle<Result<(ReliableStream<TestMessage>, SerializableKeypair), crate::Error>> {
         tokio::spawn(ReliableStream::connect_initiator(
             addr,
             None,

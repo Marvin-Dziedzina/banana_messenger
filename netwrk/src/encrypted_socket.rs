@@ -1,18 +1,18 @@
+use banana_crypto::transport::{Handshake, HandshakeRole, Public, SerializableKeypair, Transport};
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt, TryStreamExt, future::poll_fn};
-use snow::TransportState;
 use tokio::net::{TcpStream, ToSocketAddrs};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 use tracing::info;
 
-use crate::{Error, NOISE_PARAMS, serialisable_keypair::SerializableKeypair};
+use crate::Error;
 
 #[derive(Debug)]
 pub struct EncryptedSocket {
     /// Sender and receiver
     sink: Framed<TcpStream, LengthDelimitedCodec>,
     /// En- and decryption
-    transport: TransportState,
+    transport: Transport,
 
     /// Preallocated send buffer.
     pub buf: Box<[u8; u16::MAX as usize]>,
@@ -27,7 +27,7 @@ impl EncryptedSocket {
         Self::from_tcp_stream(
             TcpStream::connect(addr).await?,
             keypair,
-            HandshakeType::Initiator,
+            HandshakeRole::Initiator,
         )
         .await
     }
@@ -40,7 +40,7 @@ impl EncryptedSocket {
         Self::from_tcp_stream(
             TcpStream::connect(addr).await?,
             keypair,
-            HandshakeType::Responder,
+            HandshakeRole::Responder,
         )
         .await
     }
@@ -49,33 +49,26 @@ impl EncryptedSocket {
     pub async fn from_tcp_stream(
         tcp_stream: TcpStream,
         keypair: Option<SerializableKeypair>,
-        handshake_type: HandshakeType,
+        handshake_role: HandshakeRole,
     ) -> Result<(Self, SerializableKeypair), Error> {
-        let builder = snow::Builder::new(NOISE_PARAMS.parse().unwrap());
-        let keypair = match keypair {
-            Some(ser_keypair) => ser_keypair.into(),
-            None => builder.generate_keypair()?,
+        let (handshake, keypair) = match handshake_role {
+            HandshakeRole::Initiator => Handshake::new(keypair, &handshake_role)?,
+            HandshakeRole::Responder => Handshake::new(keypair, &handshake_role)?,
         };
-        let builder = builder.local_private_key(&keypair.private);
-
-        let handshake = match handshake_type {
-            HandshakeType::Responder => builder.build_responder(),
-            HandshakeType::Initiator => builder.build_initiator(),
-        }?;
 
         Self::from_handshake(tcp_stream, handshake)
             .await
-            .map(|v| (v, SerializableKeypair::from(keypair)))
+            .map(|v| (v, keypair))
     }
 
     /// Create [`InnerStream`] from a [`TcpStream`] and [`snow::HandshakeState`].
     pub async fn from_handshake(
         tcp_stream: TcpStream,
-        handshake_state: snow::HandshakeState,
+        handshake: Handshake,
     ) -> Result<Self, Error> {
-        let mut sink = Self::get_framed_stream(tcp_stream);
+        let mut sink = Framed::new(tcp_stream, LengthDelimitedCodec::new());
 
-        let transport = Self::handshake(&mut sink, handshake_state).await?;
+        let transport = Self::handshake(&mut sink, handshake).await?;
 
         Ok(Self {
             sink,
@@ -136,26 +129,15 @@ impl EncryptedSocket {
     async fn transport_read(&mut self, bytes: &[u8]) -> Result<Option<Vec<u8>>, Error> {
         let len = match self.transport.read_message(bytes, &mut *self.buf) {
             Ok(len) => len,
-            Err(e) => return Err(Error::Snow(e)),
+            Err(e) => return Err(Error::TransportError(e)),
         };
 
         Ok(Some(self.buf[..len].to_vec()))
     }
 
     /// Get the remote public key.
-    pub fn get_remote_public_key(&self) -> Vec<u8> {
-        self.transport
-            .get_remote_static()
-            .expect("Must be available after handshake")
-            .to_vec()
-    }
-
-    /// Generate a new [`SerializableKeypair`].
-    pub fn generate_keypair() -> SerializableKeypair {
-        snow::Builder::new(NOISE_PARAMS.parse().unwrap())
-            .generate_keypair()
-            .expect("Failed to generate new keypair")
-            .into()
+    pub fn remote_public_key(&self) -> Public {
+        self.transport.remote_public_key()
     }
 
     /// Get the local address.
@@ -170,19 +152,18 @@ impl EncryptedSocket {
 
     async fn handshake(
         sink: &mut Framed<TcpStream, LengthDelimitedCodec>,
-        handshake_state: snow::HandshakeState,
-    ) -> Result<TransportState, Error> {
-        if handshake_state.is_initiator() {
-            Self::initiator_handshake(sink, handshake_state).await
-        } else {
-            Self::responder_handshake(sink, handshake_state).await
+        handshake: Handshake,
+    ) -> Result<Transport, Error> {
+        match handshake.get_handshake_role() {
+            HandshakeRole::Initiator => Self::initiator_handshake(sink, handshake).await,
+            HandshakeRole::Responder => Self::responder_handshake(sink, handshake).await,
         }
     }
 
     async fn initiator_handshake(
         sink: &mut Framed<TcpStream, LengthDelimitedCodec>,
-        mut initiator: snow::HandshakeState,
-    ) -> Result<TransportState, Error> {
+        mut initiator: Handshake,
+    ) -> Result<Transport, Error> {
         let mut buf = [0u8; 65535];
 
         // Send ephemeral public key
@@ -197,7 +178,7 @@ impl EncryptedSocket {
         let len = initiator.write_message(&[], &mut buf)?;
         sink.send(Bytes::copy_from_slice(&buf[..len])).await?;
 
-        let transport = initiator.into_transport_mode()?;
+        let transport = Transport::try_from(initiator)?;
 
         info!("Initiator handshake successful");
 
@@ -206,8 +187,8 @@ impl EncryptedSocket {
 
     async fn responder_handshake(
         sink: &mut Framed<TcpStream, LengthDelimitedCodec>,
-        mut responder: snow::HandshakeState,
-    ) -> Result<TransportState, Error> {
+        mut responder: Handshake,
+    ) -> Result<Transport, Error> {
         let mut buf = [0u8; 65535];
 
         // Receive ephemeral public key
@@ -222,34 +203,24 @@ impl EncryptedSocket {
         let bytes = sink.next().await.unwrap()?;
         responder.read_message(&bytes, &mut buf)?;
 
-        let transport = responder.into_transport_mode()?;
+        let transport = Transport::try_from(responder)?;
 
         info!("Responder handshake successful");
 
         Ok(transport)
     }
-
-    fn get_framed_stream(stream: TcpStream) -> Framed<TcpStream, LengthDelimitedCodec> {
-        Framed::new(stream, LengthDelimitedCodec::new())
-    }
-}
-
-pub enum HandshakeType {
-    Responder,
-    Initiator,
 }
 
 #[cfg(test)]
 mod test_inner_stream {
     use std::time::Duration;
 
-    use futures::{SinkExt, StreamExt};
     use serde::{Deserialize, Serialize};
     use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
 
     use crate::encrypted_socket::EncryptedSocket;
 
-    use super::HandshakeType;
+    use super::HandshakeRole;
 
     const ADDR: &'static str = "127.0.0.1:0";
 
@@ -278,22 +249,6 @@ mod test_inner_stream {
     }
 
     #[tokio::test]
-    async fn test_sink() {
-        let (stream, other_stream) = establish_connection(ADDR).await;
-        let (mut stream, mut other_stream) = (
-            EncryptedSocket::get_framed_stream(stream),
-            EncryptedSocket::get_framed_stream(other_stream),
-        );
-
-        let msg = "Test 1".as_bytes();
-
-        stream.send(msg.into()).await.unwrap();
-        let bytes = other_stream.next().await.unwrap().unwrap();
-
-        assert_eq!(msg, bytes);
-    }
-
-    #[tokio::test]
     async fn test_local_address() {
         let (stream, other_stream) = get_inner_streams().await;
 
@@ -310,20 +265,8 @@ mod test_inner_stream {
     }
 
     #[tokio::test]
-    async fn test_generate_keypair() {
-        let _ = EncryptedSocket::generate_keypair();
-    }
-
-    #[tokio::test]
     async fn test_get_inner_streams() {
         let _ = get_inner_streams();
-    }
-
-    #[tokio::test]
-    async fn test_get_framed_stream() {
-        let (stream, other_stream) = establish_connection(ADDR).await;
-        let _ = EncryptedSocket::get_framed_stream(stream);
-        let _ = EncryptedSocket::get_framed_stream(other_stream);
     }
 
     #[tokio::test]
@@ -337,12 +280,12 @@ mod test_inner_stream {
         let other = tokio::spawn(EncryptedSocket::from_tcp_stream(
             other_stream,
             None,
-            HandshakeType::Responder,
+            HandshakeRole::Responder,
         ));
         let handle = tokio::spawn(EncryptedSocket::from_tcp_stream(
             stream,
             None,
-            HandshakeType::Initiator,
+            HandshakeRole::Initiator,
         ));
 
         (

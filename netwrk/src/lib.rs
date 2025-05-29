@@ -8,11 +8,8 @@ use serde::{Deserialize, Serialize};
 pub mod encrypted_socket;
 pub mod listener;
 pub mod reliable_stream;
-pub mod serialisable_keypair;
 
 const VERSION_MAJOR_MINOR: &str = env!("VERSION_MAJOR_MINOR");
-
-const NOISE_PARAMS: &str = "Noise_XX_25519_ChaChaPoly_BLAKE2s";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(bound(deserialize = "M: for<'a> Deserialize<'a>"))]
@@ -49,6 +46,7 @@ pub enum Error {
     BincodeEncode(bincode::error::EncodeError),
     BincodeDecode(bincode::error::DecodeError),
     TokioJoinError(tokio::task::JoinError),
+    TransportError(banana_crypto::transport::Error),
     EOF,
     Dead,
     AlreadyRunning,
@@ -69,20 +67,26 @@ impl std::fmt::Display for Reason {
 impl std::error::Error for Reason {}
 
 impl From<std::io::Error> for Error {
-    fn from(io_error: std::io::Error) -> Self {
-        Self::Io(io_error)
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
     }
 }
 
 impl From<snow::Error> for Error {
-    fn from(snow_error: snow::Error) -> Self {
-        Self::Snow(snow_error)
+    fn from(e: snow::Error) -> Self {
+        Self::Snow(e)
     }
 }
 
 impl From<tokio::task::JoinError> for Error {
-    fn from(join_error: tokio::task::JoinError) -> Self {
-        Self::TokioJoinError(join_error)
+    fn from(e: tokio::task::JoinError) -> Self {
+        Self::TokioJoinError(e)
+    }
+}
+
+impl From<banana_crypto::transport::Error> for Error {
+    fn from(e: banana_crypto::transport::Error) -> Self {
+        Self::TransportError(e)
     }
 }
 
@@ -95,6 +99,7 @@ impl std::fmt::Display for Error {
             Self::BincodeEncode(e) => write!(f, "Bincode Encode Error: {}", e),
             Self::BincodeDecode(e) => write!(f, "Bincode Decode Error: {}", e),
             Self::TokioJoinError(e) => write!(f, "Tokio Join Error: {}", e),
+            Self::TransportError(e) => write!(f, "Transport Error: {}", e),
             Self::EOF => write!(f, "EOF"),
             Self::Dead => write!(f, "Dead"),
             Self::AlreadyRunning => write!(f, "Already Running"),
@@ -136,13 +141,6 @@ fn set_atomic_bool(atomic_bool: &Arc<AtomicBool>, v: bool) {
 
 #[cfg(test)]
 mod netwrk_test {
-    use crate::Error;
-
     #[test]
-    fn test_error() {
-        println!(
-            "{}",
-            Error::Io(std::io::Error::new(std::io::ErrorKind::Other, "Test"))
-        );
-    }
+    fn test_error() {}
 }
