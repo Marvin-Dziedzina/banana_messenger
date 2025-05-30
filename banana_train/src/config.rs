@@ -14,7 +14,12 @@ pub struct Config {
 
     pub db_path: PathBuf,
 
+    pub max_buffered_connections: usize,
+    pub max_buffered_messages: usize,
+    pub max_message_channel_capacaty: usize,
+
     pub db_save_intervall: Duration,
+    pub connection_prune_intervall: Duration,
 }
 
 impl Config {
@@ -41,9 +46,16 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             addr: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 14555)),
+
             db_path: PathBuf::from_str("banana_train.db")
                 .expect("Failed to parse default for db path"),
+
+            max_buffered_connections: 10,
+            max_buffered_messages: 8,
+            max_message_channel_capacaty: 32,
+
             db_save_intervall: Duration::from_secs(5 * 60),
+            connection_prune_intervall: Duration::from_secs(60),
         }
     }
 }
