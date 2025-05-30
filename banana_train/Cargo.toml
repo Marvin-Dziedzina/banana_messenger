@@ -12,6 +12,8 @@ anyhow = { workspace = true }
 clap = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+thiserror = { workspace = true }
 netwrk = { path = "../netwrk" }
 banana_crypto = { path = "../banana_crypto" }
 db = { path = "../db" }
+common = { path = "../common" }

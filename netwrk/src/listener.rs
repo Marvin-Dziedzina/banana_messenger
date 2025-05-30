@@ -25,7 +25,7 @@ where
 {
     is_dead: Arc<AtomicBool>,
 
-    listener: Arc<Mutex<TcpListener>>,
+    listener: Option<Arc<Mutex<TcpListener>>>,
 
     listener_task: Option<JoinHandle<Result<(), Error>>>,
     connection_receiver: tokio::sync::mpsc::Receiver<(ReliableStream<M>, SocketAddr)>,
@@ -58,7 +58,7 @@ where
             Self {
                 is_dead: Arc::new(AtomicBool::new(false)),
 
-                listener: Arc::new(Mutex::new(TcpListener::bind(addr).await?)),
+                listener: Some(Arc::new(Mutex::new(TcpListener::bind(addr).await?))),
                 connection_receiver,
                 connection_sender,
 
@@ -83,7 +83,12 @@ where
             return Err(Error::AlreadyRunning);
         };
 
-        Self::accept_incoming(&self.listener, &self.keypair, self.max_buffered_messages).await
+        Self::accept_incoming(
+            &self.get_tcp_listener()?,
+            &self.keypair,
+            self.max_buffered_messages,
+        )
+        .await
     }
 
     /// Accept the next connection if ready else return [`None`].
@@ -96,7 +101,12 @@ where
             return Err(Error::AlreadyRunning);
         };
 
-        Self::try_accept_incoming(&self.listener, &self.keypair, self.max_buffered_messages).await
+        Self::try_accept_incoming(
+            &self.get_tcp_listener()?,
+            &self.keypair,
+            self.max_buffered_messages,
+        )
+        .await
     }
 
     /// Get a established connection if available. Only usable if the listener is running.
@@ -180,7 +190,7 @@ where
         if self.listener_task.is_none() {
             self.listener_task = Some(tokio::spawn(Self::listener_task(
                 self.is_dead.clone(),
-                self.listener.clone(),
+                self.get_tcp_listener()?,
                 self.connection_sender.clone(),
                 self.keypair.clone(),
                 self.max_buffered_messages,
@@ -240,8 +250,11 @@ where
     }
 
     /// Close the listener and return all established connections that where not collected. The [`VecDeque`] will be empty if the listener task was never started.
-    pub async fn close(mut self) -> Result<Vec<(ReliableStream<M>, SocketAddr)>, Error> {
+    pub async fn close(&mut self) -> Result<Vec<(ReliableStream<M>, SocketAddr)>, Error> {
         let res = self.stop_listening().await;
+        {
+            std::mem::take(&mut self.listener);
+        }
 
         self.is_dead.store(true, Ordering::Release);
 
@@ -250,7 +263,7 @@ where
 
     /// Get the local address.
     pub async fn local_address(&self) -> Result<SocketAddr, Error> {
-        Ok(self.listener.lock().await.local_addr()?)
+        Ok(self.get_tcp_listener()?.lock().await.local_addr()?)
     }
 
     async fn accept_incoming(
@@ -305,6 +318,13 @@ where
             addr,
         )))
     }
+
+    fn get_tcp_listener(&self) -> Result<Arc<Mutex<TcpListener>>, Error> {
+        match &self.listener {
+            Some(listener) => Ok(listener.clone()),
+            None => Err(Error::Dead),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -329,7 +349,7 @@ mod test_listener {
 
     #[tokio::test]
     async fn test_listener() {
-        let (listener, keypair) = Listener::<TestMessage>::bind(
+        let (mut listener, keypair) = Listener::<TestMessage>::bind(
             ADDR,
             None,
             MAX_BUFFERED_CONNECTIONS,
@@ -365,7 +385,7 @@ mod test_listener {
             addr,
             None,
             MAX_BUFFERED_MESSAGES,
-            Duration::from_secs(1),
+            Duration::from_secs(60),
         ))
     }
 }

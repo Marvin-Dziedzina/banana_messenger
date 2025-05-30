@@ -141,6 +141,10 @@ where
     }
 
     /// Send a message `M`.
+    ///
+    /// # Errors
+    ///
+    /// Will result in [`Error::Dead`] if the stream is dead.
     pub async fn send(&mut self, message: M) -> Result<(), Error> {
         if self.is_dead() {
             return Err(Error::Dead);
@@ -150,6 +154,10 @@ where
     }
 
     /// Send a batch of messages `M`.
+    ///
+    /// # Error
+    ///
+    /// Will result in [`Error::Dead`] if the stream is dead.
     pub async fn send_batch(&mut self, messages: Vec<M>) -> Result<(), Error> {
         if self.is_dead() {
             return Err(Error::Dead);

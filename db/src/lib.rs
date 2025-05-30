@@ -3,12 +3,15 @@ use std::ops::{Deref, DerefMut};
 use error::Error;
 use serde::{Serialize, de::DeserializeOwned};
 use sled::Db;
+use tree::SledTree;
 
 pub mod error;
+pub mod tree;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SledDb {
     db: Db,
+    default_tree: SledTree,
 }
 
 impl SledDb {
@@ -16,9 +19,9 @@ impl SledDb {
     where
         P: AsRef<std::path::Path>,
     {
-        Ok(Self {
-            db: sled::open(path)?,
-        })
+        let db = sled::open(path)?;
+        let default_tree = SledTree::from(db.deref().clone());
+        Ok(Self { db, default_tree })
     }
 
     pub fn insert<K, V>(&self, key: &K, value: &V) -> Result<Option<V>, Error>
@@ -26,10 +29,7 @@ impl SledDb {
         K: Serialize + DeserializeOwned,
         V: Serialize + DeserializeOwned,
     {
-        match self.db.insert(Self::encode(key)?, Self::encode(value)?)? {
-            Some(bytes) => Ok(Some(Self::decode(&bytes)?)),
-            None => Ok(None),
-        }
+        self.default_tree.insert(key, value)
     }
 
     pub fn get<K, V>(&self, key: &K) -> Result<Option<V>, Error>
@@ -37,37 +37,35 @@ impl SledDb {
         K: Serialize + DeserializeOwned,
         V: Serialize + DeserializeOwned,
     {
-        match self.db.get(Self::encode(key)?)? {
-            Some(bytes) => Ok(Some(Self::decode(&bytes)?)),
-            None => Ok(None),
-        }
+        self.default_tree.get(key)
     }
 
     pub fn flush(&self) -> Result<(), Error> {
-        self.db.flush()?;
-
-        Ok(())
+        self.default_tree.flush()
     }
 
-    pub fn encode<T>(v: T) -> Result<Vec<u8>, Error>
+    pub fn open_tree<V>(&self, name: V) -> Result<SledTree, Error>
     where
-        T: Serialize,
+        V: AsRef<[u8]>,
     {
-        Ok(bincode::serde::encode_to_vec(v, Self::bincode_config())?)
+        Ok(self.db.open_tree(name)?.into())
     }
 
-    pub fn decode<T>(bytes: &[u8]) -> Result<T, Error>
-    where
-        T: DeserializeOwned,
-    {
-        Ok(
-            bincode::serde::borrow_decode_from_slice(bytes, Self::bincode_config())
-                .map(|(x, _)| x)?,
-        )
+    pub fn get_default_tree(&self) -> &SledTree {
+        &self.default_tree
     }
+}
 
-    fn bincode_config() -> bincode::config::Configuration {
-        bincode::config::standard()
+impl From<sled::Db> for SledDb {
+    fn from(db: sled::Db) -> Self {
+        let default_tree = SledTree::from(db.deref().clone());
+        Self { db, default_tree }
+    }
+}
+
+impl From<SledDb> for sled::Db {
+    fn from(db: SledDb) -> Self {
+        db.db
     }
 }
 

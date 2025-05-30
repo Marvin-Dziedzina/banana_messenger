@@ -3,6 +3,7 @@ use std::{
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     path::{Path, PathBuf},
     str::FromStr,
+    time::Duration,
 };
 
 use serde::{Deserialize, Serialize};
@@ -11,8 +12,9 @@ use serde::{Deserialize, Serialize};
 pub struct Config {
     pub addr: SocketAddr,
 
-    pub keypair_db_path: PathBuf,
-    pub users_db_path: PathBuf,
+    pub db_path: PathBuf,
+
+    pub db_save_intervall: Duration,
 }
 
 impl Config {
@@ -39,10 +41,9 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             addr: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 14555)),
-            keypair_db_path: PathBuf::from_str("keypair.db")
-                .expect("Failed to parse default for keypair db path"),
-            users_db_path: PathBuf::from_str("users.db")
-                .expect("Failed to parse default for user db path"),
+            db_path: PathBuf::from_str("banana_train.db")
+                .expect("Failed to parse default for db path"),
+            db_save_intervall: Duration::from_secs(5 * 60),
         }
     }
 }

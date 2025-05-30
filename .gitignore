@@ -1,6 +1,9 @@
+# IDE Specific files
+.vscode
+
+# Rust
 /target
 
 # Banana Train
 banana_train.conf
-/keypair.db
-/users.db
+/banana_train.db

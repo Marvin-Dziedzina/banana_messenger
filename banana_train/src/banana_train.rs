@@ -1,58 +1,115 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 
 use banana_crypto::transport::PublicKey;
-use db::SledDb;
+use common::{BananaMessage, ReceiverPublicKey, SenderPublicKey};
+use db::{SledDb, tree::SledTree};
 use netwrk::{Listener, ReliableStream};
-use tokio::sync::broadcast;
-use tracing::{debug, info, warn};
+use tokio::{
+    sync::{Mutex, RwLock, broadcast},
+    task::JoinHandle,
+};
+use tracing::{debug, error, info, trace, warn};
 
-use crate::{BananaMessage, config::Config};
+use crate::{config::Config, error::Error, message::Message};
 
 const MAX_BUFFERED_CONNECTIONS: usize = 10;
 const MAX_BUFFERED_MESSAGES: usize = 32;
+const MAX_MESSAGE_CHANNEL_CAPACATY: usize = 32;
+
+const CONNECTION_PRUNE_INTERVALL: Duration = Duration::from_secs(2 * 60);
 
 const KEYPAIR_KEY: &str = "keypair";
+const MESSAGES_TREE: &str = "MESSAGES";
 
 #[derive(Debug)]
 pub struct BananaTrain {
-    config: Config,
+    status: Arc<RwLock<Status>>,
 
-    users_db: SledDb,
+    config: Arc<Config>,
 
-    listener: Option<Listener<BananaMessage>>,
-    streams: HashMap<PublicKey, ReliableStream<BananaMessage>>,
+    db: SledDb,
+
+    listener: Option<Arc<Mutex<Listener<BananaMessage>>>>,
+    streams: Arc<RwLock<HashMap<PublicKey, Arc<Mutex<ReliableStream<BananaMessage>>>>>>,
+
+    listener_handle: JoinHandle<Result<(), anyhow::Error>>,
+    general_purpose_processor_handle: JoinHandle<Result<(), anyhow::Error>>,
+    stream_processor_handle: JoinHandle<Result<(), anyhow::Error>>,
+    message_processor_handle: JoinHandle<Result<(), anyhow::Error>>,
 }
 
 impl BananaTrain {
     pub async fn new(config_path: PathBuf) -> Self {
-        let config = Config::try_open(&config_path).expect("Failed to read config");
+        let config = Arc::new(Config::try_open(&config_path).expect("Failed to read config"));
 
-        let keypair_db =
-            SledDb::open(&config.keypair_db_path).expect("Failed to access keypair db");
+        let db = SledDb::open(&config.db_path).expect("Failed to access database");
 
         let (listener, keypair) = Listener::bind(
             &config.addr,
-            keypair_db
-                .get(&KEYPAIR_KEY.to_owned())
+            db.get(&KEYPAIR_KEY.to_owned())
                 .expect("Failed to read keypair"),
             MAX_BUFFERED_MESSAGES,
             MAX_BUFFERED_CONNECTIONS,
         )
         .await
         .expect("Could not bind listener");
+        let listener = Arc::new(Mutex::new(listener));
 
-        keypair_db
-            .insert(&KEYPAIR_KEY.to_owned(), &keypair)
+        db.insert(&KEYPAIR_KEY.to_owned(), &keypair)
             .expect("Failed to save keypair");
-        keypair_db.flush().expect("Failed to flush keypair db");
+        db.flush().expect("Failed to flush keypair db");
 
-        let users_db = SledDb::open(&config.users_db_path).expect("Failed to open users db");
+        let streams = Arc::new(RwLock::new(HashMap::new()));
+
+        let status = Arc::new(RwLock::new(Status::Pause));
+
+        let (message_channel_sender, message_channel_receiver) =
+            tokio::sync::mpsc::channel(MAX_MESSAGE_CHANNEL_CAPACATY);
+        let (stream_processor_done_sender, stream_processor_done_receiver) =
+            tokio::sync::oneshot::channel();
+
+        let listener_handle = tokio::spawn(Self::listener(
+            status.clone(),
+            db.open_tree(MESSAGES_TREE)
+                .expect("Failed to open message tree for listener"),
+            listener.clone(),
+            streams.clone(),
+        ));
+        let db_flushing_handler_handle = tokio::spawn(Self::general_purpose_processor(
+            status.clone(),
+            config.clone(),
+            db.clone(),
+            streams.clone(),
+        ));
+        let handle_streams_handle = tokio::spawn(Self::handle_streams(
+            status.clone(),
+            streams.clone(),
+            message_channel_sender.clone(),
+            stream_processor_done_sender,
+        ));
+        let message_processor_handle = tokio::spawn(Self::process_messages(
+            status.clone(),
+            db.open_tree(MESSAGES_TREE)
+                .expect("Failed to open the message tree for message processor"),
+            streams.clone(),
+            message_channel_receiver,
+            stream_processor_done_receiver,
+        ));
 
         Self {
+            status,
+
             config,
-            users_db,
+
+            db,
+
             listener: Some(listener),
-            streams: HashMap::new(),
+            streams,
+
+            listener_handle,
+            general_purpose_processor_handle: db_flushing_handler_handle,
+            stream_processor_handle: handle_streams_handle,
+            message_processor_handle,
         }
     }
 
@@ -60,7 +117,6 @@ impl BananaTrain {
         info!("Starting BananaTrain...");
 
         let (shutdown_tx, mut shutdown_rx) = broadcast::channel::<()>(1);
-
         // Spawn shutdown listener
         {
             tokio::spawn(async move {
@@ -73,60 +129,540 @@ impl BananaTrain {
             });
         }
 
+        *self.status.write().await = Status::Run;
         info!("BananaTrain started");
-        loop {
-            tokio::task::yield_now().await;
 
-            tokio::select! {
-                _ = shutdown_rx.recv() => {
-                    return self.shutdown().await;
+        tokio::select! {
+            _ = shutdown_rx.recv() => {}
+        };
+
+        self.shutdown().await
+    }
+
+    async fn shutdown(mut self) -> Result<(), anyhow::Error> {
+        if let Some(listener) = std::mem::take(&mut self.listener) {
+            trace!("Shutting listener down");
+            let streams = listener.lock().await.close().await?;
+            for (stream, _) in streams {
+                self.streams.write().await.insert(
+                    stream.remote_public_key().await,
+                    Arc::new(Mutex::new(stream)),
+                );
+            }
+
+            trace!("Listener shutdowned");
+        };
+
+        *self.status.write().await = Status::ShuttingDown;
+        if let Err(e) = self.listener_handle.await {
+            error!("Error occured in listener: {}", e);
+        };
+        trace!("Listener shutdowned");
+
+        if let Err(e) = self.general_purpose_processor_handle.await {
+            error!("Error occured in general_purpose_processor: {}", e);
+        };
+        trace!("General purpose processor shutdowned");
+
+        if let Err(e) = self.stream_processor_handle.await {
+            error!("Error occured in stream_processor: {}", e);
+        };
+        trace!("Stream processor shutdowned");
+
+        if let Err(e) = self.message_processor_handle.await {
+            error!("Error occured in message_processor: {}", e);
+        };
+        trace!("Message processor shutdowned");
+
+        if let Err(e) = self.db.flush() {
+            warn!("Failed to flush user db: {}", e);
+        };
+        debug!("Shutdown database flush done");
+
+        Ok(())
+    }
+
+    async fn listener(
+        status: Arc<RwLock<Status>>,
+        message_db: SledTree,
+        listener: Arc<Mutex<Listener<BananaMessage>>>,
+        streams: Arc<RwLock<HashMap<PublicKey, Arc<Mutex<ReliableStream<BananaMessage>>>>>>,
+    ) -> Result<(), anyhow::Error> {
+        let addr = listener
+            .lock()
+            .await
+            .local_address()
+            .await
+            .expect("Failed to get local listener address");
+        info!("Listening to {}:{}", addr.ip(), addr.port());
+
+        loop {
+            match *status.read().await {
+                Status::Run => (),
+                Status::Pause => {
+                    tokio::task::yield_now().await;
+                    continue;
+                }
+                Status::ShuttingDown => {
+                    return Ok(());
+                }
+            };
+
+            let stream = match listener.lock().await.try_accept().await {
+                Ok(Some((stream, _))) => Arc::new(Mutex::new(stream)),
+                Ok(None) => continue,
+                Err(netwrk::Error::Dead) => continue,
+                Err(e) => {
+                    warn!("Failed to accept connection: {}", e);
+                    continue;
+                }
+            };
+
+            let public_key = stream.lock().await.remote_public_key().await;
+
+            match Self::forward_stored_messages(&stream, &message_db, &public_key)
+                .await
+                .map_err(|e| e.downcast::<Error>())
+            {
+                Err(Ok(Error::Dead)) => {
+                    if let Err(e) = stream.lock().await.close().await {
+                        warn!("Failed to close dead stream is listener: {}", e);
+                    };
+                }
+                Err(Err(e)) => {
+                    warn!("Failed to downcast error in listener: {}", e);
+                }
+                _ => (),
+            };
+
+            if let Some(stream) = streams.write().await.insert(public_key, stream) {
+                error!("A client that was still connected, connected again");
+                if let Err(e) = stream.lock().await.close().await {
+                    warn!("Failed to close the duplicate connection: {}", e);
+                };
+            };
+        }
+    }
+
+    async fn handle_streams(
+        status: Arc<RwLock<Status>>,
+        streams: Arc<RwLock<HashMap<PublicKey, Arc<Mutex<ReliableStream<BananaMessage>>>>>>,
+        message_channel_sender: tokio::sync::mpsc::Sender<(SenderPublicKey, BananaMessage)>,
+        stream_processor_done_sender: tokio::sync::oneshot::Sender<()>,
+    ) -> Result<(), anyhow::Error> {
+        loop {
+            match *status.read().await {
+                Status::Run => (),
+                Status::Pause => {
+                    tokio::task::yield_now().await;
+                    continue;
+                }
+                Status::ShuttingDown => {
+                    trace!("Shutting down stream handler");
+                    for (sender_public_key, stream) in streams.write().await.drain() {
+                        let (_, remaining) = match stream.lock().await.close().await {
+                            Ok(res) => res,
+                            Err(e) => {
+                                warn!("Failed to close stream: {}", e);
+                                continue;
+                            }
+                        };
+
+                        let remaining = match remaining {
+                            Some(remaining) => remaining,
+                            None => continue,
+                        };
+
+                        trace!(
+                            "{} Reamaining Messages: {}",
+                            sender_public_key,
+                            remaining.len()
+                        );
+
+                        for remain in remaining {
+                            if let Err(e) = message_channel_sender
+                                .send((sender_public_key.clone(), remain))
+                                .await
+                            {
+                                error!("Failed to send remaining message to processor: {}", e);
+                                continue;
+                            };
+                        }
+                    }
+
+                    if stream_processor_done_sender.send(()).is_err() {
+                        error!("Failed to send the stream_processor done signal");
+                        panic!("Failed to send the stream_processor done signal");
+                    };
+
+                    debug!("Stream handler is shutdown");
+                    return Ok(());
+                }
+            };
+
+            for (sender_public_key, stream) in streams.read().await.iter() {
+                let batch = match stream.lock().await.try_receive_batch() {
+                    Some(batch) => batch,
+                    None => {
+                        trace!("Nothing to read from {}", sender_public_key);
+                        continue;
+                    }
+                };
+
+                trace!("Got {} messages from {}", batch.len(), sender_public_key);
+
+                for msg in batch {
+                    if let Err(e) = message_channel_sender
+                        .send((sender_public_key.clone(), msg))
+                        .await
+                    {
+                        error!("Failed to send message to processor: {}", e);
+                        continue;
+                    };
+                }
+            }
+        }
+    }
+
+    async fn process_messages(
+        status: Arc<RwLock<Status>>,
+        db: SledTree,
+        streams: Arc<RwLock<HashMap<PublicKey, Arc<Mutex<ReliableStream<BananaMessage>>>>>>,
+        mut message_channel_receiver: tokio::sync::mpsc::Receiver<(SenderPublicKey, BananaMessage)>,
+        stream_processor_done_receiver: tokio::sync::oneshot::Receiver<()>,
+    ) -> Result<(), anyhow::Error> {
+        use tokio::sync::mpsc::error::TryRecvError;
+
+        loop {
+            match *status.read().await {
+                Status::Run => (),
+                Status::Pause => {
+                    tokio::task::yield_now().await;
+                    continue;
+                }
+                Status::ShuttingDown => {
+                    trace!("Message processor shutting down");
+                    match stream_processor_done_receiver.await {
+                        Ok(_) => (),
+                        Err(e) => {
+                            error!("Failed to receive the stream processor done signal: {}", e);
+                        }
+                    };
+
+                    trace!("Message processor got stream processor done signal");
+
+                    while let Ok((sender_public_key, banana_message)) =
+                        message_channel_receiver.try_recv()
+                    {
+                        match banana_message {
+                            BananaMessage::SendMessage((receiver_public_key, message)) => {
+                                trace!(
+                                    "Got message from {} for {} while shutting down",
+                                    sender_public_key, receiver_public_key
+                                );
+                                if let Err(e) = Self::insert_message_into_db(
+                                    &db,
+                                    &receiver_public_key,
+                                    sender_public_key.clone(),
+                                    message,
+                                )
+                                .await
+                                {
+                                    error!(
+                                        "Failed to insert messages from {} for {} into database: {}",
+                                        sender_public_key, receiver_public_key, e
+                                    );
+                                };
+                            }
+                            BananaMessage::ForwardedMessage(_) => {
+                                warn!(
+                                    "Received forwarded message from {}: Should not happen",
+                                    sender_public_key
+                                );
+                            }
+                            BananaMessage::ForwardRequest => {
+                                warn!(
+                                    "Received forward request from {}: Ignoring",
+                                    sender_public_key
+                                );
+                            }
+                        };
+                    }
+
+                    trace!("Message processor is shutdown");
+
+                    return Ok(());
+                }
+            };
+
+            let (sender_public_key, banana_message) = match message_channel_receiver.try_recv() {
+                Ok(bundle) => bundle,
+                Err(TryRecvError::Empty) => continue,
+                Err(TryRecvError::Disconnected) => return Err(TryRecvError::Disconnected.into()),
+            };
+
+            // Forward messages from `message_channel_receiver` or store them in the `db`.
+            match banana_message {
+                BananaMessage::SendMessage((receiver_public_key, message)) => {
+                    let streams_lock = streams.read().await;
+
+                    let stream = match streams_lock.get(&receiver_public_key) {
+                        Some(stream) => stream,
+                        None => {
+                            trace!(
+                                "Message from {} for {} inserted into database",
+                                sender_public_key.clone(),
+                                receiver_public_key
+                            );
+
+                            if let Err(e) = Self::insert_message_into_db(
+                                &db,
+                                &receiver_public_key,
+                                sender_public_key.clone(),
+                                message,
+                            )
+                            .await
+                            {
+                                warn!(
+                                    "Failed to store message from {} for {} in database. Message dropped: {}",
+                                    sender_public_key, receiver_public_key, e
+                                );
+                            };
+                            continue;
+                        }
+                    };
+
+                    if Self::forward_message(
+                        &streams,
+                        stream,
+                        &sender_public_key,
+                        &receiver_public_key,
+                        message.clone(),
+                    )
+                    .await
+                    .is_err()
+                    {
+                        if let Err(e) = Self::insert_message_into_db(
+                            &db,
+                            &receiver_public_key,
+                            sender_public_key,
+                            message,
+                        )
+                        .await
+                        {
+                            warn!(
+                                "Failed to store message in database after failing to forward it: {}",
+                                e
+                            );
+                        };
+                        continue;
+                    };
+                }
+                BananaMessage::ForwardedMessage(_) => {
+                    warn!("Received forwarded message. Should not happen");
+                    continue;
+                }
+                BananaMessage::ForwardRequest => {
+                    todo!("Not implemented");
                 }
             };
         }
     }
 
-    async fn shutdown(mut self) -> Result<(), anyhow::Error> {
-        if let Some(listener) = std::mem::take(&mut self.listener) {
-            let streams = listener.close().await?;
-            for (stream, _) in streams {
-                self.streams
-                    .insert(stream.remote_public_key().await, stream);
+    async fn insert_message_into_db(
+        db: &SledTree,
+        receiver_public_key: &ReceiverPublicKey,
+        sender_public_key: SenderPublicKey,
+        message: Vec<u8>,
+    ) -> Result<(), anyhow::Error> {
+        Self::extend_messages_in_db(
+            db,
+            receiver_public_key,
+            vec![Message::new(sender_public_key, message)],
+        )
+        .await
+    }
+
+    async fn extend_messages_in_db(
+        db: &SledTree,
+        receiver_public_key: &ReceiverPublicKey,
+        messages: Vec<Message>,
+    ) -> Result<(), anyhow::Error> {
+        let mut user_messages = match db.get(receiver_public_key) {
+            Ok(Some(user_messages)) => user_messages,
+            Ok(None) => Vec::new(),
+            Err(e) => {
+                error!("Failed to access db. Message dropped: {}", e);
+                return Err(e.into());
             }
         };
 
-        for (public_key, stream) in std::mem::take(&mut self.streams) {
-            let (_, remaining) = match stream.close().await {
-                Ok(res) => res,
-                Err(e) => {
-                    warn!("Failed to close stream from {}: {}", public_key, e);
-                    continue;
-                }
-            };
+        user_messages.extend(messages);
 
-            let messages = match remaining {
-                Some(messages) => messages,
-                None => continue,
-            };
-
-            for msg in messages {
-                match self.process_message(msg).await {
-                    Ok(_) => (),
-                    Err(e) => {
-                        warn!("Failed to process message: {}", e);
-                    }
-                };
-            }
-        }
-
-        if let Err(e) = self.users_db.flush() {
-            warn!("Failed to flush user db: {}", e);
+        if let Err(e) = db.insert(receiver_public_key, &user_messages) {
+            error!(
+                "Failed to insert message into database. Message dropped: {}",
+                e
+            );
+            return Err(e.into());
         };
 
         Ok(())
     }
 
-    async fn process_message(&mut self, msg: BananaMessage) -> Result<(), anyhow::Error> {
-        todo!()
+    async fn general_purpose_processor(
+        status: Arc<RwLock<Status>>,
+        config: Arc<Config>,
+        db: SledDb,
+        streams: Arc<RwLock<HashMap<PublicKey, Arc<Mutex<ReliableStream<BananaMessage>>>>>>,
+    ) -> Result<(), anyhow::Error> {
+        use std::time::Instant;
+
+        let mut last_save = Instant::now();
+        let mut last_prune = Instant::now();
+        loop {
+            match *status.read().await {
+                Status::Run => (),
+                Status::Pause => {
+                    tokio::task::yield_now().await;
+                    continue;
+                }
+                Status::ShuttingDown => return Ok(()),
+            };
+
+            // Flush db.
+            if last_save.elapsed() >= config.db_save_intervall {
+                last_save = Instant::now();
+
+                if let Err(e) = db.flush_async().await {
+                    warn!("Failed to flush database: {}", e);
+                    continue;
+                };
+
+                debug!("Database flushed");
+            };
+
+            // Prune dead streams.
+            if last_prune.elapsed() >= CONNECTION_PRUNE_INTERVALL {
+                last_prune = Instant::now();
+
+                let mut connections_to_prune = Vec::new();
+                {
+                    let streams_rlock = streams.read().await;
+                    for (public_key, stream) in streams_rlock.iter() {
+                        if stream.lock().await.is_dead() {
+                            connections_to_prune.push(public_key.clone());
+                        };
+                    }
+                }
+
+                let mut streams_wlock = streams.write().await;
+                for public_key in connections_to_prune {
+                    match streams_wlock.remove(&public_key) {
+                        Some(_) => debug!("Pruned {}", public_key),
+                        None => warn!("Failed to prune {}", public_key),
+                    };
+                }
+            };
+
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+    }
+
+    async fn forward_message(
+        streams: &Arc<RwLock<HashMap<PublicKey, Arc<Mutex<ReliableStream<BananaMessage>>>>>>,
+        stream: &Arc<Mutex<ReliableStream<BananaMessage>>>,
+        sender_public_key: &SenderPublicKey,
+        receiver_public_key: &ReceiverPublicKey,
+        message: Vec<u8>,
+    ) -> Result<(), anyhow::Error> {
+        match stream
+            .lock()
+            .await
+            .send(BananaMessage::ForwardedMessage((
+                sender_public_key.clone(),
+                message,
+            )))
+            .await
+        {
+            Ok(_) => (),
+            Err(netwrk::Error::Dead) => {
+                if streams.write().await.remove(receiver_public_key).is_none() {
+                    error!("Failed to remove a missing stream while using the stream");
+                    return Err(anyhow::Error::msg(
+                        "Failed to remove a missing stream while using the stream",
+                    ));
+                };
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to forward message from {} to {}: {}",
+                    sender_public_key, receiver_public_key, e
+                );
+                return Err(anyhow::Error::msg("Failed to forward message"));
+            }
+        };
+
+        trace!(
+            "Message from {} for {} forwarded",
+            sender_public_key, receiver_public_key
+        );
+
+        Ok(())
+    }
+
+    async fn forward_stored_messages(
+        stream: &Arc<Mutex<ReliableStream<BananaMessage>>>,
+        db: &SledTree,
+        public_key: &PublicKey,
+    ) -> Result<(), anyhow::Error> {
+        match db.get::<PublicKey, Vec<Message>>(public_key) {
+            Ok(Some(messages)) => {
+                let mut message_batch: Vec<BananaMessage> = Vec::new();
+                for message in messages {
+                    message_batch.push(message.into());
+                }
+
+                match stream.lock().await.send_batch(message_batch.clone()).await {
+                    Ok(_) => (),
+                    Err(netwrk::Error::Dead) => {
+                        warn!("Stream closed while listener initialized stream");
+                        return Err(Error::Dead.into());
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Error occures while trying to send stored messages. Storing messages again: {}",
+                            e
+                        );
+
+                        let mut db_messages: Vec<Message> = Vec::new();
+                        for msg in message_batch {
+                            let message = match Message::try_from(msg) {
+                                Ok(message) => message,
+                                Err(_) => {
+                                    panic!("Failed to convert BananaMessage")
+                                }
+                            };
+
+                            db_messages.push((message.sender, message.message).into());
+                        }
+
+                        match Self::extend_messages_in_db(db, public_key, db_messages).await {
+                            Ok(_) => (),
+                            Err(e) => {
+                                warn!("Failed to restore messages: {}", e);
+                            }
+                        };
+                    }
+                };
+            }
+            Ok(None) => (),
+            Err(e) => {
+                warn!("Failed to get {} messages from database: {}", public_key, e);
+            }
+        };
+
+        Ok(())
     }
 
     async fn shutdown_signal() {
@@ -140,4 +676,11 @@ impl BananaTrain {
 
         debug!("Shutdown signal received");
     }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Status {
+    Run,
+    Pause,
+    ShuttingDown,
 }
