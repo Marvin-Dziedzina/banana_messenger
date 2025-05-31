@@ -87,6 +87,7 @@ impl BananaTrain {
                 .expect("Failed to open the message tree for message processor"),
             streams.clone(),
             message_channel_receiver,
+            message_channel_sender,
             stream_processor_done_receiver,
         ));
 
@@ -324,6 +325,7 @@ impl BananaTrain {
         db: SledTree,
         streams: Arc<RwLock<HashMap<PublicKey, Arc<Mutex<ReliableStream<BananaMessage>>>>>>,
         mut message_channel_receiver: tokio::sync::mpsc::Receiver<(SenderPublicKey, BananaMessage)>,
+        message_channel_sender: tokio::sync::mpsc::Sender<(SenderPublicKey, BananaMessage)>,
         stream_processor_done_receiver: tokio::sync::oneshot::Receiver<()>,
     ) -> Result<(), anyhow::Error> {
         loop {
@@ -479,8 +481,64 @@ impl BananaTrain {
                     continue;
                 }
                 BananaMessage::ForwardRequest => {
-                    // FIXME
-                    todo!("Not implemented")
+                    let stream = {
+                        let streams_rlock = streams.read().await;
+                        match streams_rlock.get(&sender_public_key) {
+                            Some(stream) => stream.clone(),
+                            None => {
+                                warn!(
+                                    "Failed to find stream corresponding to {}",
+                                    sender_public_key
+                                );
+                                continue;
+                            }
+                        }
+                    };
+
+                    match Self::forward_stored_messages(&stream, &db, &sender_public_key).await {
+                        Ok(_) => (),
+                        Err(Error::Dead) => {
+                            warn!("Stream that requested a stored messages forwading is dead");
+                            let mut streams_wlock = streams.write().await;
+                            match streams_wlock.remove(&sender_public_key) {
+                                Some(stream) => match stream.lock().await.close().await {
+                                    Ok((_, messages_option)) => {
+                                        if let Some(messages) = messages_option {
+                                            for msg in messages {
+                                                if let Err(e) = message_channel_sender
+                                                    .send((sender_public_key.clone(), msg))
+                                                    .await
+                                                {
+                                                    warn!(
+                                                        "Failed to send message into message channel: {}",
+                                                        e
+                                                    );
+                                                };
+                                            }
+                                        };
+                                    }
+                                    Err(e) => {
+                                        warn!(
+                                            "Failed to close stream that requested a stored messages forwarding but it dead: {}",
+                                            e
+                                        );
+                                    }
+                                },
+                                None => {
+                                    warn!(
+                                        "Could not find stream that requested a stored message forwarding"
+                                    );
+                                }
+                            };
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Failed to forward stored message on request to {}: {}",
+                                sender_public_key, e
+                            );
+                            continue;
+                        }
+                    };
                 }
             };
         }
