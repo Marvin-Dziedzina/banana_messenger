@@ -16,5 +16,5 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let config_path = PathBuf::from_str(CONFIG_PATH).expect("Failed to get config path");
 
-    BananaTrain::new(config_path).await.run().await
+    BananaTrain::new(config_path).await?.run().await
 }

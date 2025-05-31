@@ -25,7 +25,7 @@ const MESSAGES_TREE: &str = "MESSAGES";
 pub struct BananaTrain {
     status: ArcRwLock<Status>,
 
-    config: Arc<Config>,
+    _config: Arc<Config>,
 
     db: SledDb,
 
@@ -39,25 +39,22 @@ pub struct BananaTrain {
 }
 
 impl BananaTrain {
-    pub async fn new(config_path: PathBuf) -> Self {
-        let config = Arc::new(Config::try_open(&config_path).expect("Failed to read config"));
+    pub async fn new(config_path: PathBuf) -> Result<Self, anyhow::Error> {
+        let config = Arc::new(Config::try_open(&config_path)?);
 
-        let db = SledDb::open(&config.db_path).expect("Failed to access database");
+        let db = SledDb::open(&config.db_path)?;
 
         let (listener, keypair) = Listener::bind(
             &config.addr,
-            db.get(&KEYPAIR_KEY.to_owned())
-                .expect("Failed to read keypair"),
+            db.get(&KEYPAIR_KEY.to_owned())?,
             config.max_buffered_connections,
             config.max_buffered_messages,
         )
-        .await
-        .expect("Could not bind listener");
+        .await?;
         let listener = Arc::new(Mutex::new(listener));
 
-        db.insert(&KEYPAIR_KEY.to_owned(), &keypair)
-            .expect("Failed to save keypair");
-        db.flush().expect("Failed to flush keypair db");
+        db.insert(&KEYPAIR_KEY.to_owned(), &keypair)?;
+        db.flush()?;
 
         let streams = Arc::new(RwLock::new(HashMap::new()));
 
@@ -70,8 +67,7 @@ impl BananaTrain {
 
         let listener_handle = tokio::spawn(Self::listener(
             status.clone(),
-            db.open_tree(MESSAGES_TREE)
-                .expect("Failed to open message tree for listener"),
+            db.open_tree(MESSAGES_TREE)?,
             listener.clone(),
             streams.clone(),
         ));
@@ -89,18 +85,17 @@ impl BananaTrain {
         ));
         let message_processor_handle = tokio::spawn(Self::process_messages(
             status.clone(),
-            db.open_tree(MESSAGES_TREE)
-                .expect("Failed to open the message tree for message processor"),
+            db.open_tree(MESSAGES_TREE)?,
             streams.clone(),
             message_channel_receiver,
             message_channel_sender,
             stream_processor_done_receiver,
         ));
 
-        Self {
+        Ok(Self {
             status,
 
-            config,
+            _config: config,
 
             db,
 
@@ -111,7 +106,7 @@ impl BananaTrain {
             general_purpose_processor_handle: db_flushing_handler_handle,
             stream_processor_handle: handle_streams_handle,
             message_processor_handle,
-        }
+        })
     }
 
     pub async fn run(self) -> Result<(), anyhow::Error> {
