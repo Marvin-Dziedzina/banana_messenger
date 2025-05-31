@@ -6,6 +6,7 @@ mod banana_train;
 mod config;
 mod error;
 mod message;
+mod tasks;
 
 const CONFIG_PATH: &str = "banana_train.conf";
 
