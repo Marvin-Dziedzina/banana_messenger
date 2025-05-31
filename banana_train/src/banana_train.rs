@@ -58,7 +58,7 @@ impl BananaTrain {
         let status = Arc::new(RwLock::new(Status::Pause));
 
         let (message_channel_sender, message_channel_receiver) =
-            tokio::sync::mpsc::channel(config.max_message_channel_capacaty);
+            tokio::sync::mpsc::channel(config.max_message_channel_capacity);
         let (stream_processor_done_sender, stream_processor_done_receiver) =
             tokio::sync::oneshot::channel();
 
@@ -344,14 +344,9 @@ impl BananaTrain {
 
                     trace!("Message processor got stream processor done signal");
 
-                    while let Some((sender_public_key, banana_message)) = tokio::select! {
-                        msg = message_channel_receiver.recv() => {
-                            msg
-                        }
-                        _ = tokio::time::sleep(Duration::from_millis(250)) => {
-                            None
-                        }
-                    } {
+                    while let Some((sender_public_key, banana_message)) =
+                        message_channel_receiver.recv().await
+                    {
                         match banana_message {
                             BananaMessage::SendMessage((receiver_public_key, message)) => {
                                 trace!(
@@ -484,7 +479,8 @@ impl BananaTrain {
                     continue;
                 }
                 BananaMessage::ForwardRequest => {
-                    todo!("Not implemented");
+                    // FIXME
+                    todo!("Not implemented")
                 }
             };
         }
@@ -552,7 +548,7 @@ impl BananaTrain {
             };
 
             // Flush db.
-            if last_save.elapsed() >= config.db_save_intervall {
+            if last_save.elapsed() >= config.db_save_interval {
                 last_save = Instant::now();
 
                 if let Err(e) = db.flush_async().await {
@@ -564,7 +560,7 @@ impl BananaTrain {
             };
 
             // Prune dead streams.
-            if last_prune.elapsed() >= config.connection_prune_intervall {
+            if last_prune.elapsed() >= config.connection_prune_interval {
                 last_prune = Instant::now();
 
                 let mut connections_to_prune = Vec::new();
@@ -607,7 +603,7 @@ impl BananaTrain {
         {
             Ok(_) => (),
             Err(netwrk::Error::Dead) => {
-                return Err(Error::Dead.into());
+                return Err(Error::Dead);
             }
             Err(e) => {
                 warn!(

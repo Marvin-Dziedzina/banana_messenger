@@ -16,10 +16,10 @@ pub struct Config {
 
     pub max_buffered_connections: usize,
     pub max_buffered_messages: usize,
-    pub max_message_channel_capacaty: usize,
+    pub max_message_channel_capacity: usize,
 
-    pub db_save_intervall: Duration,
-    pub connection_prune_intervall: Duration,
+    pub db_save_interval: Duration,
+    pub connection_prune_interval: Duration,
 }
 
 impl Config {
@@ -52,10 +52,10 @@ impl Default for Config {
 
             max_buffered_connections: 10,
             max_buffered_messages: 8,
-            max_message_channel_capacaty: 32,
+            max_message_channel_capacity: 32,
 
-            db_save_intervall: Duration::from_secs(5 * 60),
-            connection_prune_intervall: Duration::from_secs(60),
+            db_save_interval: Duration::from_secs(5 * 60),
+            connection_prune_interval: Duration::from_secs(60),
         }
     }
 }
