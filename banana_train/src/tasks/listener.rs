@@ -3,12 +3,12 @@ use std::{collections::HashMap, sync::Arc};
 use banana_crypto::transport::PublicKey;
 use common::BananaMessage;
 use db::tree::SledTree;
-use netwrk::{Listener, ReliableStream};
+use netwrk::Listener;
 use tokio::sync::Mutex;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::{
-    banana_train::{ArcMutex, ArcRwLock, BananaTrain, Status},
+    banana_train::{ArcMutex, ArcRwLock, BananaTrain, Status, Stream},
     error::Error,
 };
 
@@ -17,7 +17,7 @@ impl BananaTrain {
         status: ArcRwLock<Status>,
         message_db: SledTree,
         listener: ArcMutex<Listener<BananaMessage>>,
-        streams: ArcRwLock<HashMap<PublicKey, ArcMutex<ReliableStream<BananaMessage>>>>,
+        streams: ArcRwLock<HashMap<PublicKey, ArcMutex<Stream>>>,
     ) -> Result<(), anyhow::Error> {
         let addr = listener
             .lock()
@@ -35,6 +35,7 @@ impl BananaTrain {
                     continue;
                 }
                 Status::ShuttingDown => {
+                    debug!("Listener is shutdown");
                     return Ok(());
                 }
             };

@@ -2,15 +2,14 @@ use std::collections::HashMap;
 
 use banana_crypto::transport::PublicKey;
 use common::{BananaMessage, SenderPublicKey};
-use netwrk::ReliableStream;
 use tracing::{debug, error, trace, warn};
 
-use crate::banana_train::{ArcMutex, ArcRwLock, BananaTrain, Status};
+use crate::banana_train::{ArcMutex, ArcRwLock, BananaTrain, Status, Stream};
 
 impl BananaTrain {
     pub(crate) async fn stream_processor(
         status: ArcRwLock<Status>,
-        streams: ArcRwLock<HashMap<PublicKey, ArcMutex<ReliableStream<BananaMessage>>>>,
+        streams: ArcRwLock<HashMap<PublicKey, ArcMutex<Stream>>>,
         message_channel_sender: tokio::sync::mpsc::Sender<(SenderPublicKey, BananaMessage)>,
         stream_processor_done_sender: tokio::sync::oneshot::Sender<()>,
     ) -> Result<(), anyhow::Error> {
@@ -23,7 +22,9 @@ impl BananaTrain {
                 }
                 Status::ShuttingDown => {
                     trace!("Shutting down stream handler");
-                    for (sender_public_key, stream) in streams.write().await.drain() {
+                    let drained_streams: Vec<(PublicKey, ArcMutex<Stream>)> =
+                        streams.write().await.drain().collect();
+                    for (sender_public_key, stream) in drained_streams.iter() {
                         let (_, remaining) = match stream.lock().await.close().await {
                             Ok(res) => res,
                             Err(e) => {
@@ -59,12 +60,12 @@ impl BananaTrain {
                         panic!("Failed to send the stream_processor done signal");
                     };
 
-                    debug!("Stream handler is shutdown");
+                    debug!("Stream processor is shutdown");
                     return Ok(());
                 }
             };
 
-            for (sender_public_key, stream) in streams.read().await.iter() {
+            for (sender_public_key, stream) in Self::get_streams(&streams).await.iter() {
                 let batch = match stream.lock().await.try_receive_batch() {
                     Some(batch) => batch,
                     None => {

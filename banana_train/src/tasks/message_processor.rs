@@ -3,11 +3,10 @@ use std::{collections::HashMap, time::Duration};
 use banana_crypto::transport::PublicKey;
 use common::{BananaMessage, SenderPublicKey};
 use db::tree::SledTree;
-use netwrk::ReliableStream;
-use tracing::{error, trace, warn};
+use tracing::{debug, error, trace, warn};
 
 use crate::{
-    banana_train::{ArcMutex, ArcRwLock, BananaTrain, Status},
+    banana_train::{ArcMutex, ArcRwLock, BananaTrain, Status, Stream},
     error::Error,
 };
 
@@ -15,7 +14,7 @@ impl BananaTrain {
     pub(crate) async fn process_messages(
         status: ArcRwLock<Status>,
         db: SledTree,
-        streams: ArcRwLock<HashMap<PublicKey, ArcMutex<ReliableStream<BananaMessage>>>>,
+        streams: ArcRwLock<HashMap<PublicKey, ArcMutex<Stream>>>,
         mut message_channel_receiver: tokio::sync::mpsc::Receiver<(SenderPublicKey, BananaMessage)>,
         message_channel_sender: tokio::sync::mpsc::Sender<(SenderPublicKey, BananaMessage)>,
         stream_processor_done_receiver: tokio::sync::oneshot::Receiver<()>,
@@ -36,7 +35,9 @@ impl BananaTrain {
                         }
                     };
 
-                    trace!("Message processor got stream processor done signal");
+                    // Drop the sender or else the while will forever wait for a value that never comes.
+                    drop(message_channel_sender);
+                    trace!("Got stream processor done signal");
 
                     while let Some((sender_public_key, banana_message)) =
                         message_channel_receiver.recv().await
@@ -76,15 +77,14 @@ impl BananaTrain {
                         };
                     }
 
-                    trace!("Message processor is shutdown");
-
+                    debug!("Message processor is shutdown");
                     return Ok(());
                 }
             };
 
             let received_message = tokio::select! {
                 received_message =  message_channel_receiver.recv() => {
-                    received_message
+                    Some(received_message)
                 }
                 _ = tokio::time::sleep(Duration::from_millis(250)) => {
                     None
@@ -92,8 +92,9 @@ impl BananaTrain {
             };
 
             let (sender_public_key, banana_message) = match received_message {
-                Some(bundle) => bundle,
-                None => return Err(Error::ChannelClosed.into()),
+                Some(Some(bundle)) => bundle,
+                Some(None) => return Err(Error::ChannelClosed.into()),
+                None => continue,
             };
 
             // Forward messages from `message_channel_receiver` or store them in the `db`.

@@ -1,13 +1,11 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use banana_crypto::transport::PublicKey;
-use common::BananaMessage;
 use db::SledDb;
-use netwrk::ReliableStream;
 use tracing::{debug, warn};
 
 use crate::{
-    banana_train::{ArcMutex, ArcRwLock, BananaTrain, Status},
+    banana_train::{ArcMutex, ArcRwLock, BananaTrain, Status, Stream},
     config::Config,
 };
 
@@ -16,7 +14,7 @@ impl BananaTrain {
         status: ArcRwLock<Status>,
         config: Arc<Config>,
         db: SledDb,
-        streams: ArcRwLock<HashMap<PublicKey, ArcMutex<ReliableStream<BananaMessage>>>>,
+        streams: ArcRwLock<HashMap<PublicKey, ArcMutex<Stream>>>,
     ) -> Result<(), anyhow::Error> {
         use std::time::Instant;
 
@@ -29,7 +27,10 @@ impl BananaTrain {
                     tokio::task::yield_now().await;
                     continue;
                 }
-                Status::ShuttingDown => return Ok(()),
+                Status::ShuttingDown => {
+                    debug!("Maintenance loop is shutdown");
+                    return Ok(());
+                }
             };
 
             // Flush db.
@@ -49,13 +50,10 @@ impl BananaTrain {
                 last_prune = Instant::now();
 
                 let mut connections_to_prune = Vec::new();
-                {
-                    let streams_rlock = streams.read().await;
-                    for (public_key, stream) in streams_rlock.iter() {
-                        if stream.lock().await.is_dead() {
-                            connections_to_prune.push(public_key.clone());
-                        };
-                    }
+                for (public_key, stream) in Self::get_streams(&streams).await.iter() {
+                    if stream.lock().await.is_dead() {
+                        connections_to_prune.push(public_key.clone());
+                    };
                 }
 
                 let mut streams_wlock = streams.write().await;

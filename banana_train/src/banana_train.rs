@@ -16,6 +16,7 @@ pub type ArcRwLock<T> = Arc<RwLock<T>>;
 pub type ArcMutex<T> = Arc<Mutex<T>>;
 
 pub type TaskHandle = JoinHandle<Result<(), anyhow::Error>>;
+pub type Stream = ReliableStream<BananaMessage>;
 
 const KEYPAIR_KEY: &str = "keypair";
 const MESSAGES_TREE: &str = "MESSAGES";
@@ -29,7 +30,7 @@ pub struct BananaTrain {
     db: SledDb,
 
     listener: Option<ArcMutex<Listener<BananaMessage>>>,
-    streams: ArcRwLock<HashMap<PublicKey, ArcMutex<ReliableStream<BananaMessage>>>>,
+    streams: ArcRwLock<HashMap<PublicKey, ArcMutex<Stream>>>,
 
     listener_handle: TaskHandle,
     general_purpose_processor_handle: TaskHandle,
@@ -224,7 +225,7 @@ impl BananaTrain {
     }
 
     pub(crate) async fn forward_message(
-        stream: &Arc<Mutex<ReliableStream<BananaMessage>>>,
+        stream: &Arc<Mutex<Stream>>,
         sender_public_key: &SenderPublicKey,
         receiver_public_key: &ReceiverPublicKey,
         message: Vec<u8>,
@@ -260,7 +261,7 @@ impl BananaTrain {
     }
 
     pub(crate) async fn forward_stored_messages(
-        stream: &Arc<Mutex<ReliableStream<BananaMessage>>>,
+        stream: &Arc<Mutex<Stream>>,
         db: &SledTree,
         public_key: &PublicKey,
     ) -> Result<(), Error> {
@@ -311,6 +312,17 @@ impl BananaTrain {
         };
 
         Ok(())
+    }
+
+    /// Get a [`Vec`] of all currently connected streams.
+    pub(crate) async fn get_streams(
+        streams: &ArcRwLock<HashMap<PublicKey, ArcMutex<Stream>>>,
+    ) -> Vec<(PublicKey, ArcMutex<Stream>)> {
+        let streams_rlock = streams.read().await;
+        streams_rlock
+            .iter()
+            .map(|(k, s)| (k.clone(), s.clone()))
+            .collect()
     }
 
     async fn shutdown_signal() {
