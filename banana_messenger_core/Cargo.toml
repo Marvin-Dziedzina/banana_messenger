@@ -5,5 +5,4 @@ edition = "2024"
 
 [dependencies]
 tokio = { workspace = true }
-rusqlite = { workspace = true }
 netwrk = { path = "../netwrk" }
