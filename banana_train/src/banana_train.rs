@@ -138,8 +138,8 @@ impl BananaTrain {
     async fn shutdown(mut self) -> Result<(), anyhow::Error> {
         if let Some(listener) = std::mem::take(&mut self.listener) {
             trace!("Shutting listener down");
-            let streams = listener.lock().await.close().await?;
-            for (stream, _) in streams {
+            let unprocessed_streams = listener.lock().await.close().await?;
+            for (stream, _) in unprocessed_streams {
                 self.streams.write().await.insert(
                     stream.remote_public_key().await,
                     Arc::new(Mutex::new(stream)),
