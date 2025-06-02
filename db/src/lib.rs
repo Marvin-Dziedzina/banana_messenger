@@ -24,26 +24,30 @@ impl SledDb {
         Ok(Self { db, default_tree })
     }
 
+    #[inline]
     pub fn insert<K, V>(&self, key: &K, value: &V) -> Result<Option<V>, Error>
     where
         K: Serialize + DeserializeOwned,
         V: Serialize + DeserializeOwned,
     {
-        self.default_tree.insert(key, value)
+        self.get_default_tree().insert(key, value)
     }
 
+    #[inline]
     pub fn get<K, V>(&self, key: &K) -> Result<Option<V>, Error>
     where
         K: Serialize + DeserializeOwned,
         V: Serialize + DeserializeOwned,
     {
-        self.default_tree.get(key)
+        self.get_default_tree().get(key)
     }
 
+    #[inline]
     pub fn flush(&self) -> Result<(), Error> {
-        self.default_tree.flush()
+        self.get_default_tree().flush()
     }
 
+    #[inline]
     pub fn open_tree<V>(&self, name: V) -> Result<SledTree, Error>
     where
         V: AsRef<[u8]>,
@@ -51,6 +55,7 @@ impl SledDb {
         Ok(self.db.open_tree(name)?.into())
     }
 
+    #[inline]
     pub fn get_default_tree(&self) -> &SledTree {
         &self.default_tree
     }
@@ -72,12 +77,14 @@ impl From<SledDb> for sled::Db {
 impl Deref for SledDb {
     type Target = Db;
 
+    #[inline]
     fn deref(&self) -> &Self::Target {
         &self.db
     }
 }
 
 impl DerefMut for SledDb {
+    #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.db
     }

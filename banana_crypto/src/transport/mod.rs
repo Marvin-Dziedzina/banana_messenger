@@ -16,16 +16,19 @@ pub struct Transport {
 
 impl Transport {
     /// Decrypt a message from 'payload` into `message` and return the number of decrypted bytes.
+    #[inline]
     pub fn read_message(&mut self, payload: &[u8], message: &mut [u8]) -> Result<usize, Error> {
         Ok(self.transport.read_message(payload, message)?)
     }
 
     /// Encrypt a message from `payload` into `message` and return the number of encrypted bytes.
+    #[inline]
     pub fn write_message(&mut self, payload: &[u8], message: &mut [u8]) -> Result<usize, Error> {
         Ok(self.transport.write_message(payload, message)?)
     }
 
     /// Get the remote public key.
+    #[inline]
     pub fn remote_public_key(&self) -> PublicKey {
         self.transport
             .get_remote_static()
@@ -34,6 +37,7 @@ impl Transport {
     }
 
     /// Generate a new [`SerializableKeypair`].
+    #[inline]
     pub fn generate_keypair() -> Keypair {
         snow::Builder::new(NOISE_PARAMS.parse().unwrap())
             .generate_keypair()

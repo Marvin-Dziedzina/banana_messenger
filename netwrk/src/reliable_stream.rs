@@ -1,7 +1,4 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::{Arc, atomic::AtomicBool};
 
 use banana_crypto::transport::{HandshakeRole, Keypair, PublicKey, Transport};
 use serde::{Deserialize, Serialize};
@@ -14,7 +11,7 @@ use tracing::{debug, error, info, trace, warn};
 
 use crate::{
     Error, NetworkMessage, Reason, VERSION_MAJOR_MINOR, decode, encode,
-    encrypted_socket::EncryptedSocket, set_atomic_bool,
+    encrypted_socket::EncryptedSocket, get_atomic_bool, set_atomic_bool,
 };
 
 /// A [`ReliableStream`].
@@ -300,7 +297,7 @@ where
         );
 
         loop {
-            if is_dead.load(Ordering::Relaxed) {
+            if get_atomic_bool(&is_dead) {
                 return Reason::Dead;
             };
 
@@ -417,21 +414,25 @@ where
     }
 
     /// Is [`ReliableStream`] dead.
+    #[inline]
     pub fn is_dead(&self) -> bool {
-        self.is_dead.load(Ordering::Relaxed)
+        get_atomic_bool(&self.is_dead)
     }
 
     /// Get the local address.
+    #[inline]
     pub async fn local_address(&self) -> Result<std::net::SocketAddr, Error> {
         self.inner.lock().await.local_address()
     }
 
     /// Get the remote address.
+    #[inline]
     pub async fn remote_address(&self) -> Result<std::net::SocketAddr, Error> {
         self.inner.lock().await.remote_address()
     }
 
     /// Get the remote public key.
+    #[inline]
     pub async fn remote_public_key(&self) -> PublicKey {
         self.inner.lock().await.remote_public_key()
     }
@@ -439,6 +440,7 @@ where
     /// Generate a new [`SerializableKeypair`].
     ///
     /// This [`SerializableKeypair`] can be stored.
+    #[inline]
     pub fn generate_keypair() -> Keypair {
         Transport::generate_keypair()
     }

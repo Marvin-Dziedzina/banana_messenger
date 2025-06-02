@@ -134,16 +134,19 @@ impl EncryptedSocket {
     }
 
     /// Get the remote public key.
+    #[inline]
     pub fn remote_public_key(&self) -> PublicKey {
         self.transport.remote_public_key()
     }
 
     /// Get the local address.
+    #[inline]
     pub fn local_address(&self) -> Result<std::net::SocketAddr, Error> {
         Ok(self.sink.get_ref().local_addr()?)
     }
 
     /// Get the remote address.
+    #[inline]
     pub fn remote_address(&self) -> Result<std::net::SocketAddr, Error> {
         Ok(self.sink.get_ref().peer_addr()?)
     }

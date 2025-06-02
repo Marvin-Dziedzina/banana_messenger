@@ -92,7 +92,7 @@ const fn bincode_config() -> bincode::config::Configuration<bincode::config::Big
     bincode::config::standard().with_big_endian()
 }
 
-pub fn get_atomic_bool(atomic_bool: &Arc<AtomicBool>) -> bool {
+fn get_atomic_bool(atomic_bool: &Arc<AtomicBool>) -> bool {
     atomic_bool.load(Ordering::Acquire)
 }
 

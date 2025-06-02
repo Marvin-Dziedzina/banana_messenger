@@ -43,12 +43,14 @@ impl SledTree {
         }
     }
 
+    #[inline]
     pub fn flush(&self) -> Result<(), Error> {
         self.tree.flush()?;
 
         Ok(())
     }
 
+    #[inline]
     pub fn encode<T>(v: T) -> Result<Vec<u8>, Error>
     where
         T: Serialize,
@@ -56,6 +58,7 @@ impl SledTree {
         Ok(bincode::serde::encode_to_vec(v, Self::bincode_config())?)
     }
 
+    #[inline]
     pub fn decode<T>(bytes: &[u8]) -> Result<T, Error>
     where
         T: DeserializeOwned,
@@ -86,12 +89,14 @@ impl From<SledTree> for sled::Tree {
 impl Deref for SledTree {
     type Target = sled::Tree;
 
+    #[inline]
     fn deref(&self) -> &Self::Target {
         &self.tree
     }
 }
 
 impl DerefMut for SledTree {
+    #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.tree
     }

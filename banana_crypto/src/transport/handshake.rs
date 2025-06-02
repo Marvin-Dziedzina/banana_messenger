@@ -78,21 +78,25 @@ impl Handshake {
         ))
     }
 
+    #[inline]
     pub fn get_handshake_role(&self) -> &HandshakeRole {
         &self.handshake_role
     }
 
     /// Read the handshake.
+    #[inline]
     pub fn read_message(&mut self, message: &[u8], payload: &mut [u8]) -> Result<usize, Error> {
         Ok(self.handshake.read_message(message, payload)?)
     }
 
     /// Write the handshake response.
+    #[inline]
     pub fn write_message(&mut self, message: &mut [u8]) -> Result<usize, Error> {
         Ok(self.handshake.write_message(&[], message)?)
     }
 
     /// Generate a new [`SerializableKeypair`].
+    #[inline]
     pub fn generate_keypair() -> Keypair {
         Transport::generate_keypair()
     }

@@ -1,9 +1,6 @@
 use std::{
     net::SocketAddr,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{Arc, atomic::AtomicBool},
     time::Duration,
 };
 
@@ -16,7 +13,7 @@ use tokio::{
 };
 use tracing::warn;
 
-use crate::{Error, reliable_stream::ReliableStream, set_atomic_bool};
+use crate::{Error, get_atomic_bool, reliable_stream::ReliableStream, set_atomic_bool};
 
 #[derive(Debug)]
 pub struct Listener<M>
@@ -204,11 +201,11 @@ where
     /// Stop the listener.
     pub async fn stop_listening(&mut self) -> Result<Vec<(ReliableStream<M>, SocketAddr)>, Error> {
         if let Some(listener_task) = std::mem::take(&mut self.listener_task) {
-            self.is_dead.store(true, Ordering::Release);
+            set_atomic_bool(&self.is_dead, true);
 
             listener_task.await??;
 
-            self.is_dead.store(false, Ordering::Release);
+            set_atomic_bool(&self.is_dead, false);
         };
 
         Ok(Self::get_connection_batch_from_receiver(
@@ -225,7 +222,7 @@ where
         max_buffered_messages: usize,
     ) -> Result<(), Error> {
         loop {
-            if is_dead.load(Ordering::Acquire) {
+            if get_atomic_bool(&is_dead) {
                 return Ok(());
             };
 
@@ -256,12 +253,13 @@ where
             std::mem::take(&mut self.listener);
         }
 
-        self.is_dead.store(true, Ordering::Release);
+        set_atomic_bool(&self.is_dead, true);
 
         res
     }
 
     /// Get the local address.
+    #[inline]
     pub async fn local_address(&self) -> Result<SocketAddr, Error> {
         Ok(self.get_tcp_listener()?.lock().await.local_addr()?)
     }
