@@ -11,7 +11,7 @@ use crate::{
 };
 
 impl BananaTrain {
-    pub(crate) async fn process_messages(
+    pub(crate) async fn message_processor(
         status: ArcRwLock<Status>,
         db: SledTree,
         streams: ArcRwLock<HashMap<PublicKey, ArcMutex<Stream>>>,

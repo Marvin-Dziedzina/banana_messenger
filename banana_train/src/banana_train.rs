@@ -83,7 +83,7 @@ impl BananaTrain {
             message_channel_sender.clone(),
             stream_processor_done_sender,
         ));
-        let message_processor_handle = tokio::spawn(Self::process_messages(
+        let message_processor_handle = tokio::spawn(Self::message_processor(
             status.clone(),
             db.open_tree(MESSAGES_TREE)?,
             streams.clone(),
@@ -310,6 +310,7 @@ impl BananaTrain {
     }
 
     /// Get a [`Vec`] of all currently connected streams.
+    #[inline]
     pub(crate) async fn get_streams(
         streams: &ArcRwLock<HashMap<PublicKey, ArcMutex<Stream>>>,
     ) -> Vec<(PublicKey, ArcMutex<Stream>)> {
