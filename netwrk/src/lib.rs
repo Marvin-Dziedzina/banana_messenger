@@ -71,6 +71,7 @@ pub enum Error {
     NotRunning,
 }
 
+#[inline]
 fn encode<T>(message: T) -> Result<Vec<u8>, Error>
 where
     T: Serialize + for<'a> Deserialize<'a>,
@@ -78,6 +79,7 @@ where
     Ok(bincode::serde::encode_to_vec(message, bincode_config())?)
 }
 
+#[inline]
 fn decode<T>(bytes: &[u8]) -> Result<T, Error>
 where
     T: Serialize + for<'a> Deserialize<'a>,
@@ -88,14 +90,17 @@ where
     )
 }
 
+#[inline]
 const fn bincode_config() -> bincode::config::Configuration<bincode::config::BigEndian> {
     bincode::config::standard().with_big_endian()
 }
 
+#[inline]
 fn get_atomic_bool(atomic_bool: &Arc<AtomicBool>) -> bool {
     atomic_bool.load(Ordering::Acquire)
 }
 
+#[inline]
 fn set_atomic_bool(atomic_bool: &Arc<AtomicBool>, v: bool) {
     atomic_bool.store(v, Ordering::Release);
 }

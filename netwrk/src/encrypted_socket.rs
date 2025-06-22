@@ -19,6 +19,7 @@ pub struct EncryptedSocket {
 
 impl EncryptedSocket {
     /// Create a new initiator [`InnerStream`] from a address. Will return a newly generated [`SerializableKeypair`] if `keypair` is [`None`] otherwise it will return the supplied [`SerializableKeypair`].
+    #[inline]
     pub async fn new_initiator<A: ToSocketAddrs>(
         addr: A,
         keypair: Option<Keypair>,
@@ -32,6 +33,7 @@ impl EncryptedSocket {
     }
 
     /// Create a new responder [`InnerStream`] from a address. Will return a newly generated [`SerializableKeypair`] if `keypair` is [`None`] otherwise it will return the supplied [`SerializableKeypair`].
+    #[inline]
     pub async fn new_responder<A: ToSocketAddrs>(
         addr: A,
         keypair: Option<Keypair>,
@@ -45,6 +47,7 @@ impl EncryptedSocket {
     }
 
     /// Create a [`InnerStream`] from a [`TcpStream`]. Will return a newly generated [`SerializableKeypair`] if `keypair` is [`None`] otherwise it will return the supplied [`SerializableKeypair`].
+    #[inline]
     pub async fn from_tcp_stream(
         tcp_stream: TcpStream,
         keypair: Option<Keypair>,
@@ -61,6 +64,7 @@ impl EncryptedSocket {
     }
 
     /// Create [`InnerStream`] from a [`TcpStream`] and [`snow::HandshakeState`].
+    #[inline]
     pub async fn from_handshake(
         tcp_stream: TcpStream,
         handshake: Handshake,
@@ -81,6 +85,7 @@ impl EncryptedSocket {
     /// # Errors
     ///
     /// Will result in either [`Error::Snow`] or [`Error::Io`] if the encryption or the stream fails.
+    #[inline]
     pub async fn send(&mut self, bytes: &[u8]) -> Result<(), Error> {
         let len = self.transport.write_message(bytes, &mut *self.buf)?;
         self.sink
@@ -95,6 +100,7 @@ impl EncryptedSocket {
     /// # Errors
     ///
     /// Will result in a [`Error::Io`] if a the stream errors.
+    #[inline]
     pub async fn read(&mut self) -> Result<Option<&[u8]>, Error> {
         let bytes = match self.sink.try_next().await? {
             Some(bytes) => bytes,
@@ -124,6 +130,7 @@ impl EncryptedSocket {
         self.transport_read(&bytes).await
     }
 
+    #[inline]
     async fn transport_read(&mut self, bytes: &[u8]) -> Result<Option<&[u8]>, Error> {
         let len = match self.transport.read_message(bytes, &mut *self.buf) {
             Ok(bytes) => bytes,
@@ -151,6 +158,7 @@ impl EncryptedSocket {
         Ok(self.sink.get_ref().peer_addr()?)
     }
 
+    #[inline]
     async fn handshake(
         sink: &mut Framed<TcpStream, LengthDelimitedCodec>,
         handshake: Handshake,

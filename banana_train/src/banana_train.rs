@@ -178,6 +178,7 @@ impl BananaTrain {
         Ok(())
     }
 
+    #[inline]
     pub(crate) async fn insert_message_into_db(
         db: &SledTree,
         receiver_public_key: &ReceiverPublicKey,
@@ -321,6 +322,7 @@ impl BananaTrain {
             .collect()
     }
 
+    #[inline]
     async fn shutdown_signal() {
         let mut signal = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
             .expect("signal handler");

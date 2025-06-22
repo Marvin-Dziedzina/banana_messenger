@@ -62,6 +62,7 @@ impl SledDb {
 }
 
 impl From<sled::Db> for SledDb {
+    #[inline]
     fn from(db: sled::Db) -> Self {
         let default_tree = SledTree::from(db.deref().clone());
         Self { db, default_tree }
@@ -69,6 +70,7 @@ impl From<sled::Db> for SledDb {
 }
 
 impl From<SledDb> for sled::Db {
+    #[inline]
     fn from(db: SledDb) -> Self {
         db.db
     }

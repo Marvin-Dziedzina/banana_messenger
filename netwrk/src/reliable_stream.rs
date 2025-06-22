@@ -142,6 +142,7 @@ where
     /// # Errors
     ///
     /// Will result in [`Error::Dead`] if the stream is dead.
+    #[inline]
     pub async fn send(&mut self, message: M) -> Result<(), Error> {
         if self.is_dead() {
             return Err(Error::Dead);
@@ -155,6 +156,7 @@ where
     /// # Error
     ///
     /// Will result in [`Error::Dead`] if the stream is dead.
+    #[inline]
     pub async fn send_batch(&mut self, messages: Vec<M>) -> Result<(), Error> {
         if self.is_dead() {
             return Err(Error::Dead);
@@ -169,6 +171,7 @@ where
     }
 
     /// Send a `M`.
+    #[inline]
     async fn send_message<'a>(
         inner: &mut tokio::sync::MutexGuard<'a, EncryptedSocket>,
         message: M,
@@ -177,6 +180,7 @@ where
     }
 
     /// Send a [`NetworkMessage`].
+    #[inline]
     async fn send_netwrk_message<'a>(
         inner: &mut tokio::sync::MutexGuard<'a, EncryptedSocket>,
         netwrk_message: NetworkMessage<M>,
@@ -185,6 +189,7 @@ where
     }
 
     /// Receive the next message. Yield once a message is available.
+    #[inline]
     pub async fn receive(&mut self) -> Option<M> {
         if self.is_closed() {
             return None;
@@ -196,6 +201,7 @@ where
     /// Receive a available message. Returns [`None`] if no messages are available at the moment.
     ///
     /// This function should not be run in a loop without any await in a single threaded runtime. If done it will always return [`None`].
+    #[inline]
     pub fn try_receive(&mut self) -> Option<M> {
         if self.is_closed() {
             return None;
@@ -409,6 +415,7 @@ where
     }
 
     /// Is message receiver closed.
+    #[inline]
     fn is_closed(&self) -> bool {
         self.message_receiver.is_closed()
     }

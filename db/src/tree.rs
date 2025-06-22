@@ -10,6 +10,7 @@ pub struct SledTree {
 }
 
 impl SledTree {
+    #[inline]
     pub fn insert<K, V>(&self, key: &K, value: &V) -> Result<Option<V>, Error>
     where
         K: Serialize + DeserializeOwned,
@@ -21,6 +22,7 @@ impl SledTree {
         }
     }
 
+    #[inline]
     pub fn get<K, V>(&self, key: &K) -> Result<Option<V>, Error>
     where
         K: Serialize + DeserializeOwned,
@@ -32,6 +34,7 @@ impl SledTree {
         }
     }
 
+    #[inline]
     pub fn remove<K, V>(&self, key: &K) -> Result<Option<V>, Error>
     where
         K: Serialize + DeserializeOwned,
@@ -69,18 +72,21 @@ impl SledTree {
         )
     }
 
+    #[inline]
     fn bincode_config() -> bincode::config::Configuration {
         bincode::config::standard()
     }
 }
 
 impl From<sled::Tree> for SledTree {
+    #[inline]
     fn from(tree: sled::Tree) -> Self {
         Self { tree }
     }
 }
 
 impl From<SledTree> for sled::Tree {
+    #[inline]
     fn from(tree: SledTree) -> Self {
         tree.tree
     }
