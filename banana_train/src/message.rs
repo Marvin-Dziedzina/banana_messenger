@@ -10,24 +10,28 @@ pub struct Message {
 }
 
 impl Message {
+    #[inline]
     pub fn new(sender: SenderPublicKey, message: Vec<u8>) -> Self {
         Self { sender, message }
     }
 }
 
 impl From<Message> for BananaMessage {
+    #[inline]
     fn from(message: Message) -> Self {
         Self::ForwardedMessage(message.into())
     }
 }
 
 impl From<Message> for (SenderPublicKey, Vec<u8>) {
+    #[inline]
     fn from(message: Message) -> Self {
         (message.sender, message.message)
     }
 }
 
 impl From<(SenderPublicKey, Vec<u8>)> for Message {
+    #[inline]
     fn from((sender, message): (SenderPublicKey, Vec<u8>)) -> Self {
         Message::new(sender, message)
     }
@@ -36,6 +40,7 @@ impl From<(SenderPublicKey, Vec<u8>)> for Message {
 impl TryFrom<BananaMessage> for Message {
     type Error = anyhow::Error;
 
+    #[inline]
     fn try_from(banana_message: BananaMessage) -> Result<Self, Self::Error> {
         match banana_message {
             BananaMessage::ForwardedMessage(msg) => Ok(msg.into()),

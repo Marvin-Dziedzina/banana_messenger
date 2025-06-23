@@ -135,6 +135,7 @@ impl BananaTrain {
         self.shutdown().await
     }
 
+    #[cold]
     async fn shutdown(mut self) -> Result<(), anyhow::Error> {
         if let Some(listener) = std::mem::take(&mut self.listener) {
             trace!("Shutting listener down");
@@ -322,7 +323,6 @@ impl BananaTrain {
             .collect()
     }
 
-    #[inline]
     async fn shutdown_signal() {
         let mut signal = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
             .expect("signal handler");

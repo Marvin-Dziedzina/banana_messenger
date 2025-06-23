@@ -23,6 +23,7 @@ pub struct Config {
 }
 
 impl Config {
+    #[inline]
     pub fn create(path: &Path) -> anyhow::Result<Self> {
         let default = Self::default();
         fs::write(path, toml::to_string(&default)?)?;
@@ -30,10 +31,12 @@ impl Config {
         Ok(default)
     }
 
+    #[inline]
     pub fn open(path: &Path) -> anyhow::Result<Self> {
         Ok(toml::from_str(&fs::read_to_string(path)?)?)
     }
 
+    #[inline]
     pub fn try_open(path: &Path) -> anyhow::Result<Self> {
         match Self::open(path) {
             Ok(config) => Ok(config),
